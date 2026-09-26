@@ -7,5 +7,17 @@ export * from './ole-document-doc-editor.js';
 export * from './ole-document-doc-fib.js';
 export * from './ole-document-doc-fkp.js';
 export * from './ole-document-doc-pieces.js';
-
-
+export * from './legacy-excel-types.js';
+export * from './legacy-excel-cfb.js';
+export * from './legacy-excel-biff8.js';
+export * from './legacy-excel-biff8-writer.js';
+export * from './legacy-office-detect.js';
+export * from './legacy-ppt-record-stream.js';
+export * from './legacy-ppt-record-types.js';
+export * from './legacy-ppt-writer.js';
+export * from './ole-summary-properties.js';
+export * from './legacy-office-metadata.js';
+export * from './legacy-visio-inspect.js';
+export * from './legacy-publisher-inspect.js';
+export * from './ole2-stream-edit.js';
+export * from './legacy-ppt-writer.js';

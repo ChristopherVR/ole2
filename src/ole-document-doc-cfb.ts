@@ -29,7 +29,17 @@ export interface DocCfbUnwrap {
 
 /** Unwrap a `.doc` payload's CFB container. Returns `undefined` if it is not a readable `WordDocument` CFB payload. */
 export function unwrapDocBytes(bytes: Uint8Array): DocCfbUnwrap | undefined {
-	if (bytes.length < 8 || bytes[0] !== 0xd0 || bytes[1] !== 0xcf || bytes[2] !== 0x11 || bytes[3] !== 0xe0 || bytes[4] !== 0xa1 || bytes[5] !== 0xb1 || bytes[6] !== 0x1a || bytes[7] !== 0xe1) {
+	if (
+		bytes.length < 8 ||
+		bytes[0] !== 0xd0 ||
+		bytes[1] !== 0xcf ||
+		bytes[2] !== 0x11 ||
+		bytes[3] !== 0xe0 ||
+		bytes[4] !== 0xa1 ||
+		bytes[5] !== 0xb1 ||
+		bytes[6] !== 0x1a ||
+		bytes[7] !== 0xe1
+	) {
 		return undefined;
 	}
 	try {

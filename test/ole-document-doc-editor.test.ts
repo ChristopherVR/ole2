@@ -26,10 +26,17 @@ describe('Word 97-2003 piece table editing', () => {
 	});
 
 	it('handles growth, Windows-1252 and UTF-16 text across repeated edits', () => {
-		let updated = writeOleDocParagraphEdit(loadFixture(), 1, 'Café naïve, curly ‘quotes’. ' + 'Long text. '.repeat(100));
+		let updated = writeOleDocParagraphEdit(
+			loadFixture(),
+			1,
+			'Café naïve, curly ‘quotes’. ' + 'Long text. '.repeat(100),
+		);
 		updated = writeOleDocParagraphEdit(updated, 3, 'Emoji fallback 😀 end.');
 		expect(readOleDocParagraphs(updated)).toStrictEqual([
-			paragraphs[0], 'Café naïve, curly ‘quotes’. ' + 'Long text. '.repeat(100), paragraphs[2], 'Emoji fallback 😀 end.',
+			paragraphs[0],
+			'Café naïve, curly ‘quotes’. ' + 'Long text. '.repeat(100),
+			paragraphs[2],
+			'Emoji fallback 😀 end.',
 		]);
 	});
 

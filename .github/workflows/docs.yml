@@ -5,6 +5,12 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'demo/**'
+      - 'src/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig.json'
+      - 'scripts/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -27,9 +33,16 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Assemble Pages site
+        run: bun scripts/build-pages.mjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
-          path: docs
+          path: .pages-site
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -3,26 +3,52 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<meta name="description" content="API guide for the @christophervr/ole2 OLE2 and legacy Word codecs." />
+		<meta name="description" content="API guide and browser demo for the @christophervr/ole2 compound-file and legacy Office codecs." />
+		<meta name="theme-color" content="#fbfaf7" />
 		<title>OLE2 package · API guide</title>
-		<link rel="stylesheet" href="./styles.css" />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&display=swap" />
+		<link rel="stylesheet" href="./site.css" />
+		<script defer src="./theme.js"></script>
 	</head>
 	<body>
 		<a class="skip-link" href="#main">Skip to content</a>
-		<header class="site-header">
-			<a class="brand" href="#top" aria-label="OLE2 package home">OLE2<span> / API guide</span></a>
-			<nav aria-label="Main navigation">
-				<a href="#quick-start">Quick start</a>
-				<a href="#legacy-doc">Legacy Word</a>
-				<a href="#limits">Scope</a>
-			</nav>
+		<header class="site-header" id="top">
+			<div class="site-header__inner">
+				<a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">O</span><span>@christophervr/<strong>ole2</strong></span></a>
+				<nav aria-label="Main navigation">
+					<a href="#quick-start">API guide</a>
+					<a href="#legacy-doc">Legacy formats</a>
+					<a href="./demo/">Live demo</a>
+				</nav>
+				<div class="header-actions">
+					<a class="github-link" href="https://github.com/ChristopherVR/ole2">GitHub <span aria-hidden="true">↗</span></a>
+					<button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme" title="Switch color theme">◐</button>
+				</div>
+			</div>
 		</header>
 		<main id="main">
-			<section class="hero" id="top" aria-labelledby="page-title">
-				<p class="eyebrow">JavaScript · TypeScript · Node.js 22+</p>
-				<h1 id="page-title">Read and write OLE2 files.</h1>
-				<p class="hero-copy">A small TypeScript library for Microsoft Compound Binary Files and legacy Word 97–2003 documents.</p>
-				<a class="button" href="#quick-start">Start with the API <span aria-hidden="true">↓</span></a>
+			<section class="hero" aria-labelledby="page-title">
+				<div class="hero-inner">
+					<div class="hero-copy">
+						<p class="eyebrow">OLE2 · LEGACY OFFICE · TYPESCRIPT</p>
+						<h1 id="page-title">Open the file.<br /><em>Read its streams.</em></h1>
+						<p class="lede">A focused JavaScript library for compound files, legacy Word text, and a bounded preview of old Excel worksheets.</p>
+						<div class="hero-actions">
+							<a class="button button--solid" href="#quick-start"><span>Start with the API</span></a>
+							<a class="button button--ghost" href="./demo/"><span>Try the browser demo</span></a>
+						</div>
+						<div class="install-line"><span>Install</span><code>npm install @christophervr/ole2</code></div>
+					</div>
+					<aside class="stream-card" aria-label="Examples of named streams">
+						<div class="stream-card__head"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>COMMON STREAMS</span></div>
+						<div class="stream-row"><code>WordDocument</code><span>DOC</span></div>
+						<div class="stream-row"><code>Workbook</code><span>XLS</span></div>
+						<div class="stream-row"><code>PowerPoint Document</code><span>PPT</span></div>
+						<p>Stream names can identify a format. Format detection does not mean every format is fully supported.</p>
+					</aside>
+				</div>
 			</section>
 
 			<section class="content-grid" id="quick-start" aria-labelledby="start-title">
@@ -115,25 +141,92 @@ if (edited === docBytes) {
 				</div>
 			</section>
 
+			<section class="content-grid excel-guide" id="legacy-xls" aria-labelledby="xls-title">
+				<div class="section-copy">
+					<p class="eyebrow">04 / Legacy Excel</p>
+					<h2 id="xls-title">Preview the first worksheet</h2>
+					<p><code>readOleXlsGrid</code> reads a bounded view of the first BIFF8 worksheet. Its rows contain cells with display text and a numeric flag.</p>
+					<p>Numeric and string cell writers return new bytes when an edit is applied. They return the original byte array unchanged when the target cannot be safely edited.</p>
+				</div>
+				<div class="code-card">
+					<div class="code-label">Read and update a cell</div>
+					<pre><code>import {
+  readOleXlsGrid,
+  writeOleXlsNumericCellEdit,
+} from '@christophervr/ole2';
+
+const grid = readOleXlsGrid(xlsBytes, 30, 12);
+if (!grid) throw new Error('No readable BIFF8 worksheet');
+console.log(grid.sheetName, grid.rows[0]?.cells);
+
+const edited = writeOleXlsNumericCellEdit(xlsBytes, {
+  row: 0, col: 0, value: 42,
+});
+if (edited === xlsBytes) {
+  throw new Error('This cell edit was not supported');
+}</code></pre>
+				</div>
+			</section>
+
+			<section class="content-grid" id="legacy-ppt" aria-labelledby="ppt-title">
+				<div class="section-copy">
+					<p class="eyebrow">05 / Legacy PowerPoint export</p>
+					<h2 id="ppt-title">Build a binary .ppt file</h2>
+					<p>The PowerPoint viewer and other consumers share the same binary serializer. Pass a neutral <code>WDeck</code> model with dimensions in EMU, slide shapes and picture data.</p>
+					<p>The serializer handles text, shapes, pictures, notes, embedded objects and optional legacy RC4 encryption. Viewer-specific conversion and rendering stay in the PowerPoint package.</p>
+				</div>
+				<div class="code-card"><div class="code-label">Create a blank legacy presentation</div><pre><code>import { buildPptFile } from '@christophervr/ole2/legacy-ppt-writer';
+
+const bytes = await buildPptFile({
+  widthEmu: 9144000,
+  heightEmu: 5143500,
+  slides: [{ shapes: [] }],
+  pictures: [],
+});
+// Write bytes to a .ppt file.</code></pre></div>
+			</section>
+			<section class="content-grid" id="metadata" aria-labelledby="metadata-title">
+				<div class="section-copy">
+					<p class="eyebrow">05 / Shared document properties</p>
+					<h2 id="metadata-title">Edit metadata across legacy Office files</h2>
+					<p>Read and update existing SummaryInformation text properties in DOC, XLS, PPT, Visio and Publisher containers. Edits must fit the existing property slot and use Windows-1250 through Windows-1258 or UTF-16. Other compound-file bytes stay unchanged.</p>
+					<p>The <a href="./demo/">local file demo</a> includes property editing and downloads. Visio drawings and Publisher publication pages are not yet decoded or editable.</p>
+				</div>
+				<div class="code-card"><div class="code-label">Update an existing document title</div><pre><code>import {
+  readLegacyOfficeMetadata,
+  writeLegacyOfficeMetadata,
+  inspectLegacyVisio,
+  inspectLegacyPublisher,
+} from '@christophervr/ole2';
+
+console.log(readLegacyOfficeMetadata(bytes));
+const edited = writeLegacyOfficeMetadata(bytes, 'title', 'New title');
+if (edited === bytes) console.log('Unchanged or unsupported edit.');
+
+// Format-specific binary header inspection:
+console.log(inspectLegacyVisio(bytes));
+console.log(inspectLegacyPublisher(bytes));</code></pre></div>
+			</section>
 			<section class="scope" id="limits" aria-labelledby="scope-title">
-				<p class="eyebrow">04 / Scope</p>
-				<h2 id="scope-title">Know what the helpers cover</h2>
+				<p class="eyebrow">05 / Format detection</p>
+				<h2 id="scope-title">Detection reports the support level</h2>
+				<p class="scope-intro"><code>identifyLegacyOffice</code> reads CFB stream names and returns a format, support level, stream list, and explanation. It does not parse every format it can identify.</p>
 				<div class="scope-cards">
 					<article>
-						<h3>OLE2 containers</h3>
-						<p>The parser reads compound-file entries and streams. The writer creates a minimal version 3 container; format-specific streams still need valid format data.</p>
+						<h3>DOC · XLS</h3>
+						<p>Partial support: main-body text for legacy Word and a bounded first-sheet preview plus constrained cell edits for BIFF8 Excel.</p>
 					</article>
 					<article>
-						<h3>Legacy Word text</h3>
-						<p>Paragraph reading exposes main-body text. Editing preserves the selected paragraph’s formatting when it can safely update the document structures.</p>
+						<h3>PPT · Visio · Publisher</h3>
+						<p>PowerPoint binary export and record primitives are shared with the presentation viewer. Visio and Publisher have binary-header inspection and standard document-property editing; drawing and publication-page editing are not supported.</p>
 					</article>
 					<article>
-						<h3>Safe failure</h3>
-						<p>Unsupported or unreadable input returns <code>undefined</code> from the reader. Unsafe edits return the exact input byte array unchanged.</p>
+						<h3>OLE2 streams</h3>
+						<p>The container reader lists and reads named streams. Building a CFB container does not create valid content for every Office format.</p>
 					</article>
 				</div>
 			</section>
 		</main>
-		<footer><span>OLE2 API guide</span><a href="https://github.com/ChristopherVR/ole2">Source on GitHub <span aria-hidden="true">↗</span></a></footer>
+		<footer><span>© 2026 ChristopherVR · Apache-2.0</span><a href="https://github.com/ChristopherVR/ole2">Source on GitHub <span aria-hidden="true">↗</span></a></footer>
 	</body>
 </html>
