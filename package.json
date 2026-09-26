@@ -1,0 +1,56 @@
+{
+  "name": "@christophervr/ole2",
+  "version": "0.1.0",
+  "description": "Shared MS-CFB compound-file and legacy Word binary codecs",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js",
+      "default": "./dist/*.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:package": "node scripts/package-smoke.mjs",
+    "prepack": "bun run build",
+    "release:check": "node scripts/release.mjs --check",
+    "release:publish": "node scripts/release.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.0"
+  },
+  "author": "ChristopherVR",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChristopherVR/ole2.git"
+  },
+  "homepage": "https://github.com/ChristopherVR/ole2#readme",
+  "bugs": {
+    "url": "https://github.com/ChristopherVR/ole2/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
