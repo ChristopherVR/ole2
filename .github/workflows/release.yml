@@ -15,9 +15,10 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
+    environment: npm
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v7
@@ -44,3 +45,21 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: bun run release:publish
+      - name: Create GitHub release with npm artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          ARTIFACT_DIR="$RUNNER_TEMP/npm-release"
+          mkdir -p "$ARTIFACT_DIR"
+          npm pack "https://registry.npmjs.org/@christophervr/ole2/-/ole2-$VERSION.tgz" --ignore-scripts --pack-destination "$ARTIFACT_DIR"
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            FLAGS=()
+            [[ "$VERSION" != *-* ]] || FLAGS+=(--prerelease)
+            gh release create "$RELEASE_TAG" --verify-tag --title "@christophervr/ole2 $VERSION" --generate-notes "${FLAGS[@]}"
+          fi
+          gh release upload "$RELEASE_TAG" "$ARTIFACT_DIR"/*.tgz --clobber
