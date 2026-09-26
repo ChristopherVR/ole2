@@ -34,7 +34,7 @@
 					<div class="hero-copy">
 						<p class="eyebrow">OLE2 · LEGACY OFFICE · TYPESCRIPT</p>
 						<h1 id="page-title">Open the file.<br /><em>Read its streams.</em></h1>
-						<p class="lede">A focused JavaScript library for compound files, legacy Word text, and a bounded preview of old Excel worksheets.</p>
+						<p class="lede">Shared compound-file tools, legacy Word and Excel editing, PowerPoint export, and Office document properties.</p>
 						<div class="hero-actions">
 							<a class="button button--solid" href="#quick-start"><span>Start with the API</span></a>
 							<a class="button button--ghost" href="./demo/"><span>Try the browser demo</span></a>
@@ -187,7 +187,7 @@ const bytes = await buildPptFile({
 			</section>
 			<section class="content-grid" id="metadata" aria-labelledby="metadata-title">
 				<div class="section-copy">
-					<p class="eyebrow">05 / Shared document properties</p>
+					<p class="eyebrow">06 / Shared document properties</p>
 					<h2 id="metadata-title">Edit metadata across legacy Office files</h2>
 					<p>Read and update existing SummaryInformation text properties in DOC, XLS, PPT, Visio and Publisher containers. Edits must fit the existing property slot and use Windows-1250 through Windows-1258 or UTF-16. Other compound-file bytes stay unchanged.</p>
 					<p>The <a href="./demo/">local file demo</a> includes property editing and downloads. Visio drawings and Publisher publication pages are not yet decoded or editable.</p>
@@ -208,7 +208,7 @@ console.log(inspectLegacyVisio(bytes));
 console.log(inspectLegacyPublisher(bytes));</code></pre></div>
 			</section>
 			<section class="scope" id="limits" aria-labelledby="scope-title">
-				<p class="eyebrow">05 / Format detection</p>
+				<p class="eyebrow">07 / Format detection</p>
 				<h2 id="scope-title">Detection reports the support level</h2>
 				<p class="scope-intro"><code>identifyLegacyOffice</code> reads CFB stream names and returns a format, support level, stream list, and explanation. It does not parse every format it can identify.</p>
 				<div class="scope-cards">
