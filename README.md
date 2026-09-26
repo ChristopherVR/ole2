@@ -6,6 +6,8 @@ Framework-neutral primitives for legacy Office compound files. Shared by the Pow
 npm install @christophervr/ole2
 ```
 
+[Read the API guide and examples](https://christophervr.github.io/ole2/).
+
 ## Scope
 
 - MS-CFB/OLE2 compound-file stream reading and writing, including mini streams, FAT/DIFAT and directory metadata.

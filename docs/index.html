@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="description" content="API guide for the @christophervr/ole2 OLE2 and legacy Word codecs." />
+		<title>OLE2 package · API guide</title>
+		<link rel="stylesheet" href="./styles.css" />
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+		<header class="site-header">
+			<a class="brand" href="#top" aria-label="OLE2 package home">OLE2<span> / API guide</span></a>
+			<nav aria-label="Main navigation">
+				<a href="#quick-start">Quick start</a>
+				<a href="#legacy-doc">Legacy Word</a>
+				<a href="#limits">Scope</a>
+			</nav>
+		</header>
+		<main id="main">
+			<section class="hero" id="top" aria-labelledby="page-title">
+				<p class="eyebrow">JavaScript · TypeScript · Node.js 22+</p>
+				<h1 id="page-title">Read and write OLE2 files.</h1>
+				<p class="hero-copy">A small TypeScript library for Microsoft Compound Binary Files and legacy Word 97–2003 documents.</p>
+				<a class="button" href="#quick-start">Start with the API <span aria-hidden="true">↓</span></a>
+			</section>
+
+			<section class="content-grid" id="quick-start" aria-labelledby="start-title">
+				<div class="section-copy">
+					<p class="eyebrow">01 / Quick start</p>
+					<h2 id="start-title">Install the package</h2>
+					<p>Import the public functions and types from the package root. The reader returns named directory entries and stream bytes.</p>
+					<pre><code>npm install @christophervr/ole2</code></pre>
+				</div>
+				<div class="code-card">
+					<div class="code-label">Parse a compound file</div>
+					<pre><code>import {
+  ENTRY_TYPE_STREAM,
+  Ole2ParseError,
+  parseOle2,
+} from '@christophervr/ole2';
+
+try {
+  const file = parseOle2(arrayBuffer);
+  const streams = file.entries
+    .filter((entry) =&gt; entry.type === ENTRY_TYPE_STREAM)
+    .map((entry) =&gt; entry.name);
+  const wordBytes = file.getStream('WordDocument');
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(
+    error instanceof Ole2ParseError ? 'Invalid OLE2 file:' : 'Could not read OLE2 file:',
+    message,
+  );
+}</code></pre>
+					<p class="code-note"><code>parseOle2</code> accepts an <code>ArrayBuffer</code>. <code>getStream</code> returns <code>Uint8Array | undefined</code>.</p>
+				</div>
+			</section>
+
+			<section class="content-grid reverse" aria-labelledby="write-title">
+				<div class="section-copy">
+					<p class="eyebrow">02 / Build</p>
+					<h2 id="write-title">Write named streams</h2>
+					<p><code>buildOle2</code> writes a minimal version 3 compound container from a map of names to bytes. It returns an <code>ArrayBuffer</code>.</p>
+				</div>
+				<div class="code-card">
+					<div class="code-label">Round-trip a stream</div>
+					<pre><code>import { buildOle2, parseOle2 } from '@christophervr/ole2';
+
+const streams = new Map([
+  ['Example', new TextEncoder().encode('hello')],
+]);
+const bytes = buildOle2(streams);
+
+const parsed = parseOle2(bytes);
+const example = parsed.getStream('Example');
+if (!example) throw new Error('Example stream is missing');
+const message = new TextDecoder().decode(example);</code></pre>
+					<p class="code-note">Optional arguments are a 16-byte root CLSID and a mini-stream cutoff (default <code>4096</code>).</p>
+				</div>
+			</section>
+
+			<section class="legacy" id="legacy-doc" aria-labelledby="legacy-title">
+				<div class="legacy-intro">
+					<p class="eyebrow">03 / Legacy Word</p>
+					<h2 id="legacy-title">Read and edit main-body text</h2>
+					<p>Use these helpers with the bytes of a complete Word 97–2003 <code>.doc</code> file. Paragraph indexes start at zero.</p>
+				</div>
+				<div class="legacy-examples">
+					<div class="code-card">
+						<div class="code-label">Read paragraphs</div>
+						<pre><code>import { readOleDocParagraphs } from '@christophervr/ole2';
+
+const paragraphs = readOleDocParagraphs(docBytes);
+if (paragraphs === undefined) {
+  throw new Error('Unsupported or unreadable .doc file');
+}
+console.log(paragraphs);</code></pre>
+					</div>
+					<div class="code-card">
+						<div class="code-label">Edit safely</div>
+						<pre><code>import { writeOleDocParagraphEdit } from '@christophervr/ole2';
+
+const edited = writeOleDocParagraphEdit(
+  docBytes,
+  0,
+  'Updated paragraph text',
+);
+if (edited === docBytes) {
+  throw new Error('This edit was not supported');
+}
+// Save `edited` as the updated .doc file.</code></pre>
+						<p class="code-note">A successful edit returns new bytes. If the file or edit is unsupported, the original byte array is returned unchanged.</p>
+					</div>
+				</div>
+			</section>
+
+			<section class="scope" id="limits" aria-labelledby="scope-title">
+				<p class="eyebrow">04 / Scope</p>
+				<h2 id="scope-title">Know what the helpers cover</h2>
+				<div class="scope-cards">
+					<article>
+						<h3>OLE2 containers</h3>
+						<p>The parser reads compound-file entries and streams. The writer creates a minimal version 3 container; format-specific streams still need valid format data.</p>
+					</article>
+					<article>
+						<h3>Legacy Word text</h3>
+						<p>Paragraph reading exposes main-body text. Editing preserves the selected paragraph’s formatting when it can safely update the document structures.</p>
+					</article>
+					<article>
+						<h3>Safe failure</h3>
+						<p>Unsupported or unreadable input returns <code>undefined</code> from the reader. Unsafe edits return the exact input byte array unchanged.</p>
+					</article>
+				</div>
+			</section>
+		</main>
+		<footer><span>OLE2 API guide</span><a href="https://github.com/ChristopherVR/ole2">Source on GitHub <span aria-hidden="true">↗</span></a></footer>
+	</body>
+</html>
