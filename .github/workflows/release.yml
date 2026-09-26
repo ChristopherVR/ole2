@@ -56,7 +56,17 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           ARTIFACT_DIR="$RUNNER_TEMP/npm-release"
           mkdir -p "$ARTIFACT_DIR"
-          npm pack "https://registry.npmjs.org/@christophervr/ole2/-/ole2-$VERSION.tgz" --ignore-scripts --pack-destination "$ARTIFACT_DIR"
+          # npm can accept publication before its tarball is available globally.
+          for ATTEMPT in {1..20}; do
+            if npm pack "https://registry.npmjs.org/@christophervr/ole2/-/ole2-$VERSION.tgz" --ignore-scripts --pack-destination "$ARTIFACT_DIR"; then
+              break
+            fi
+            if [[ "$ATTEMPT" == 20 ]]; then
+              echo "Published npm artifact is still unavailable after ten minutes."
+              exit 1
+            fi
+            sleep 30
+          done
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             FLAGS=()
             [[ "$VERSION" != *-* ]] || FLAGS+=(--prerelease)
