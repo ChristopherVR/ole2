@@ -1,6 +1,20 @@
 const root = document.documentElement;
 const preferenceKey = 'ole2-site-theme';
 
+document.addEventListener('click', async (event) => {
+	const button = event.target instanceof Element ? event.target.closest('button.copy-code') : null;
+	if (!button) return;
+	const source = button.dataset.copySource ?? '';
+	try {
+		await navigator.clipboard.writeText(source);
+		button.textContent = 'Copied';
+		setTimeout(() => (button.textContent = 'Copy'), 1400);
+	} catch {
+		button.textContent = 'Copy unavailable';
+		setTimeout(() => (button.textContent = 'Copy'), 1400);
+	}
+});
+
 let selected;
 try {
 	selected = localStorage.getItem(preferenceKey);

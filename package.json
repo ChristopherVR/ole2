@@ -64,11 +64,14 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"test": "vitest run",
 		"test:package": "node scripts/package-smoke.mjs",
+		"test:pages": "node scripts/check-page-highlight.mjs",
+		"build:pages": "bun scripts/build-pages.mjs",
 		"prepack": "bun run build",
 		"release:check": "node scripts/release.mjs --check",
 		"release:publish": "node scripts/release.mjs"
 	},
 	"devDependencies": {
+		"shiki": "^4.4.3",
 		"typescript": "^5.9.3",
 		"vitest": "^3.2.0"
 	},

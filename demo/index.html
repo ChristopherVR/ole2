@@ -1,70 +1,161 @@
 <!doctype html>
 <html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<meta name="description" content="Explore local OLE2 files and preview supported legacy Word and Excel content in your browser." />
-		<meta name="theme-color" content="#fbfaf7" />
-		<title>Local file demo · OLE2</title>
-		<link rel="preconnect" href="https://fonts.googleapis.com" />
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&display=swap" />
-		<link rel="stylesheet" href="./site.css" />
-		<script defer src="../theme.js"></script>
-		<script type="module" src="./main.js"></script>
-	</head>
-	<body>
-		<header class="site-header">
-			<div class="site-header__inner">
-				<a class="brand" href="../"><span class="brand-mark" aria-hidden="true">O</span><span>@christophervr/<strong>ole2</strong></span></a>
-				<nav aria-label="Main navigation"><a href="../">API guide</a><a href="#streams-heading">Streams</a></nav>
-				<div class="header-actions"><span class="privacy">Local file demo</span><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme" title="Switch color theme">◐</button></div>
-			</div>
-		</header>
-		<main>
-			<section class="intro" aria-labelledby="title">
-				<p class="eyebrow">LOCAL FILE EXPLORER</p>
-				<h1 id="title">See what’s inside an OLE file.</h1>
-				<p class="lede">Choose a legacy Office file to list its compound streams and preview supported Word or Excel content. The file is read locally and is never uploaded.</p>
-			</section>
-			<section class="picker" aria-label="Choose a file">
-				<input id="file-input" type="file" accept=".doc,.xls,.ppt,.vsd,.vss,.vst,.pub,.ole,.bin,application/x-ole-storage,application/vnd.ms-excel,application/msword,application/vnd.ms-powerpoint" />
-				<label class="file-button" for="file-input">Choose an OLE file</label>
-				<span class="file-hint">Word .doc · Excel .xls · PowerPoint .ppt · Visio .vsd · Publisher .pub</span>
-			</section>
-			<p id="status" class="status" role="status" aria-live="polite">Choose a file to begin.</p>
-			<div id="results" hidden>
-				<section id="metadata-result" class="result-section" aria-labelledby="metadata-heading" hidden>
-					<h2 id="metadata-heading">Document properties</h2>
-					<p class="muted">Edit existing text properties within their allocated space. Other compound-file bytes are preserved. This does not edit Visio drawings or Publisher page content.</p>
-					<div id="metadata-fields"></div>
-					<button id="download-metadata" class="file-button" type="button">Download file</button>
-				</section>
-				<section class="file-summary" aria-labelledby="file-heading">
-					<div><p class="eyebrow">SELECTED FILE</p><h2 id="file-heading"></h2></div>
-					<span id="file-size" class="size-pill"></span>
-				</section>
-				<section class="format-result" aria-labelledby="format-heading">
-					<div><p class="eyebrow">FORMAT DETECTION</p><h2 id="format-heading"></h2></div>
-					<p id="format-reason"></p>
-				</section>
-				<section class="result-section" aria-labelledby="streams-heading">
-					<div class="section-heading"><div><p class="eyebrow">COMPOUND FILE</p><h2 id="streams-heading">Streams</h2></div><span id="stream-count" class="size-pill"></span></div>
-					<div class="table-scroll"><table><thead><tr><th scope="col">Stream name</th><th scope="col">Size</th></tr></thead><tbody id="streams"></tbody></table></div>
-					<p class="muted">Names are displayed as text from the file. They are not treated as markup.</p>
-				</section>
-				<section id="word-result" class="result-section" aria-labelledby="word-heading" hidden>
-					<div class="section-heading"><div><p class="eyebrow">LEGACY WORD · MAIN BODY</p><h2 id="word-heading">Paragraphs</h2></div></div>
-				<div id="word-paragraphs" class="paragraph-list"></div>
-				<p class="muted">This preview shows main-body paragraph text only.</p>
-				</section>
-				<section id="excel-result" class="result-section" aria-labelledby="excel-heading" hidden>
-					<div class="section-heading"><div><p class="eyebrow">LEGACY EXCEL · BIFF8</p><h2 id="excel-heading">First worksheet</h2></div><span id="sheet-name" class="size-pill"></span></div>
-				<div id="excel-grid" class="table-scroll"></div>
-				<p class="muted">Preview is bounded to the first 30 rows and 12 columns.</p>
-				</section>
-			</div>
-			<footer><a href="../">Read the API guide <span aria-hidden="true">↗</span></a><span>Powered by @christophervr/ole2</span></footer>
-		</main>
-	</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Explore local OLE2 files and preview supported legacy Word and Excel content in your browser."
+    />
+    <meta name="theme-color" content="#fbfaf7" />
+    <title>Local file demo · OLE2</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&display=swap"
+    />
+    <link rel="stylesheet" href="./site.css" />
+    <script defer src="../theme.js"></script>
+    <script type="module" src="./main.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="brand" href="../"
+          ><span class="brand-mark" aria-hidden="true">O</span
+          ><span>@christophervr/<strong>ole2</strong></span></a
+        >
+        <nav aria-label="Main navigation">
+          <a href="../">API guide</a><a href="#streams-heading">Streams</a>
+        </nav>
+        <div class="header-actions">
+          <span class="privacy">Local file demo</span
+          ><button
+            class="theme-toggle"
+            type="button"
+            data-theme-toggle
+            aria-label="Switch color theme"
+            title="Switch color theme"
+          >
+            ◐
+          </button>
+        </div>
+      </div>
+    </header>
+    <main>
+      <section class="intro" aria-labelledby="title">
+        <p class="eyebrow">LOCAL FILE EXPLORER</p>
+        <h1 id="title">See what’s inside an OLE file.</h1>
+        <p class="lede">
+          Start with a built-in file or choose a legacy Office document to inspect its compound
+          streams and preview supported Word or Excel content. Files are read locally and never
+          uploaded.
+        </p>
+      </section>
+      <section class="picker" aria-label="Choose a file">
+        <input
+          id="file-input"
+          type="file"
+          accept=".doc,.xls,.ppt,.vsd,.vss,.vst,.pub,.ole,.bin,application/x-ole-storage,application/vnd.ms-excel,application/msword,application/vnd.ms-powerpoint"
+        />
+        <label class="file-button" for="file-input">Choose an OLE file</label>
+        <label class="sample-picker-label" for="sample-picker">Or explore a sample</label>
+        <select id="sample-picker" aria-label="Built-in sample">
+          <option value="word-97-sample.doc" selected>Word 97–2003 · text preview</option>
+          <option value="excel-biff8-sample.xls">Excel BIFF8 · worksheet preview</option>
+          <option value="powerpoint-97-sample.ppt">PowerPoint 97–2003 · stream inspection</option>
+          <option value="visio-inspection-only.vsd">Visio · header inspection only</option>
+          <option value="publisher-inspection-only.pub">
+            Publisher · signature inspection only
+          </option>
+        </select>
+        <button id="load-sample" class="file-button file-button--secondary" type="button">
+          Load sample
+        </button>
+        <span class="file-hint"
+          >Word .doc · Excel .xls · PowerPoint .ppt · Visio .vsd · Publisher .pub</span
+        >
+      </section>
+      <p id="status" class="status" role="status" aria-live="polite">Choose a file to begin.</p>
+      <div id="results" hidden>
+        <section
+          id="metadata-result"
+          class="result-section"
+          aria-labelledby="metadata-heading"
+          hidden
+        >
+          <h2 id="metadata-heading">Document properties</h2>
+          <p class="muted">
+            Edit existing text properties within their allocated space. Other compound-file bytes
+            are preserved. This does not edit Visio drawings or Publisher page content.
+          </p>
+          <div id="metadata-fields"></div>
+          <button id="download-metadata" class="file-button" type="button">Download file</button>
+        </section>
+        <section class="file-summary" aria-labelledby="file-heading">
+          <div>
+            <p class="eyebrow">SELECTED FILE</p>
+            <h2 id="file-heading"></h2>
+          </div>
+          <span id="file-size" class="size-pill"></span>
+        </section>
+        <section class="format-result" aria-labelledby="format-heading">
+          <div>
+            <p class="eyebrow">FORMAT DETECTION</p>
+            <h2 id="format-heading"></h2>
+          </div>
+          <p id="format-reason"></p>
+        </section>
+        <section class="result-section" aria-labelledby="streams-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">COMPOUND FILE</p>
+              <h2 id="streams-heading">Streams</h2>
+            </div>
+            <span id="stream-count" class="size-pill"></span>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Stream name</th>
+                  <th scope="col">Size</th>
+                </tr>
+              </thead>
+              <tbody id="streams"></tbody>
+            </table>
+          </div>
+          <p class="muted">
+            Names are displayed as text from the file. They are not treated as markup.
+          </p>
+        </section>
+        <section id="word-result" class="result-section" aria-labelledby="word-heading" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">LEGACY WORD · MAIN BODY</p>
+              <h2 id="word-heading">Paragraphs</h2>
+            </div>
+          </div>
+          <div id="word-paragraphs" class="paragraph-list"></div>
+          <p class="muted">This preview shows main-body paragraph text only.</p>
+        </section>
+        <section id="excel-result" class="result-section" aria-labelledby="excel-heading" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">LEGACY EXCEL · BIFF8</p>
+              <h2 id="excel-heading">First worksheet</h2>
+            </div>
+            <span id="sheet-name" class="size-pill"></span>
+          </div>
+          <div id="excel-grid" class="table-scroll"></div>
+          <p class="muted">Preview is bounded to the first 30 rows and 12 columns.</p>
+        </section>
+      </div>
+      <footer>
+        <a href="../">Read the API guide <span aria-hidden="true">↗</span></a
+        ><span>Powered by @christophervr/ole2</span>
+      </footer>
+    </main>
+  </body>
 </html>
