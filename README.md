@@ -80,3 +80,5 @@ bun run test:package
 ```
 
 The packed-package smoke test installs the tarball into an independent temporary npm project and exercises the public API. The build clears its own `dist` directory so removed codecs cannot accidentally remain in a release. Only compiled output, license, notice and readme ship to npm.
+
+The Pages build contains the format guides by default. To include the browser demo and generated samples in a local Pages build, set `OLE2_BUILD_PAGES_DEMO=1` before running `bun run build:pages`.

@@ -29,8 +29,12 @@ export async function generateSitePages(outputDirectory) {
 	const homeHtml = await readFile(homeContentPath, 'utf8');
 	const paths = Object.fromEntries(apiPages.map((page) => [page.slug, `{{base}}api/${page.slug}/`]));
 	const links = apiPages.map((page) => `<a href="${paths[page.slug]}">${escapeHtml(page.title.replace('Legacy ', ''))}</a>`).join('');
+	const demoEnabled = process.env.OLE2_BUILD_PAGES_DEMO === '1';
 	const render = async (content, title, description, base) => {
-		let html = template.replace('{{content}}', content).replaceAll('{{api_links}}', links).replaceAll('{{title}}', escapeHtml(title)).replaceAll('{{description}}', escapeHtml(description)).replaceAll('{{base}}', base).replaceAll('{{home}}', `${base}`).replaceAll('{{demo}}', `${base}demo/`);
+		const demoUrl = `${base}demo/`;
+		const demoAction = demoEnabled ? `<a class="button button--ghost" href="${demoUrl}">Try the browser demo</a>` : '';
+		const demoNav = demoEnabled ? `<a href="${demoUrl}">Live demo</a>` : '';
+		let html = template.replace('{{content}}', content).replaceAll('{{api_links}}', links).replaceAll('{{demo_action}}', demoAction).replaceAll('{{demo_nav}}', demoNav).replaceAll('{{title}}', escapeHtml(title)).replaceAll('{{description}}', escapeHtml(description)).replaceAll('{{base}}', base).replaceAll('{{home}}', `${base}`);
 		for (const page of apiPages) html = html.replaceAll(`{{${page.slug}}}`, `${base}api/${page.slug}/`);
 		html = html.replaceAll('{{shared}}', `${base}api/containers/`);
 		const unresolved = html.match(/\{\{[^}]+\}\}/g);

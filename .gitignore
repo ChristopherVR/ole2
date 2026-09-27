@@ -4,3 +4,4 @@ coverage/
 *.tsbuildinfo
 *.tgz
 .pages-site/
+.pages-check/
