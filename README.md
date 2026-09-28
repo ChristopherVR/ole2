@@ -69,6 +69,14 @@ const pptBytes = await buildPptFile({
 
 The writer consumes the typed `WDeck` model. Converting a PowerPoint viewer document into that model remains in `pptx-viewer-core`; it consumes this shared binary implementation.
 
+### Known limitations of the `.ppt` writer
+
+- **One slide master per deck.** `WDeck` carries a single `master` and `masterStyles`, and the writer emits one `MainMaster`. Every slide's `SlideAtom.masterIdRef` is the `0x80000000` sentinel PowerPoint itself writes for a single-master deck (writing the master's persist id there fails PowerPoint's file validation). A deck with several masters is therefore written with the first master on every slide. Supporting more needs a multi-master `WDeck` and a measurement of how PowerPoint encodes `masterIdRef` when a deck has several masters.
+- **Picture formats.** BLIPs are `png`, `jpg`, `emf`, `wmf` and `dib`, matching PowerPoint's own 97-2003 save. GIF, TIFF and SVG sources must be converted by the caller first (`pptx-viewer-core` stores a GIF's first frame and a TIFF as a compressed PNG, and rasterises SVG).
+- **Media.** Embedded sound is written as a playable WAV `SoundCollectionContainer`. The model has no video record, so video and non-WAV audio should be passed as their poster picture, which is what PowerPoint's own 97-2003 save produces.
+- **Encryption.** Password-protected output uses RC4 CryptoAPI only; the pre-CryptoAPI Office 95 scheme is not written.
+- **Modern-only content.** Charts, SmartArt, ink and 3D models have no binary record of their own; callers write a preview picture and can attach the element's OOXML as a `metroBlob` so PowerPoint 2007+ reopens it as the native object.
+
 ## Development
 
 ```sh
