@@ -191,6 +191,11 @@ export interface WSlide {
 	backgroundRgb?: string;
 	shapes: WAnyShape[];
 	notesParagraphs?: WParagraph[];
+	/**
+	 * Index into `WDeck.masters` of the main master this slide follows.
+	 * Absent, negative or out of range falls back to the first master.
+	 */
+	masterIndex?: number;
 }
 
 /** One indent level of a master text style: paragraph + character defaults. */
@@ -250,4 +255,16 @@ export interface WDeck {
 	masterStyles?: WMasterTextStyles;
 	/** Main-master placeholders and round-trip records; defaults when absent. */
 	master?: WMasterRoundTrip;
+	/**
+	 * Every main master the deck writes, in order, each slide picking one by
+	 * `WSlide.masterIndex`. When absent or empty the deck writes a single
+	 * master from `masterStyles` and `master`.
+	 */
+	masters?: WMaster[];
+}
+
+/** One main master: its text styles plus placeholders and round-trip records. */
+export interface WMaster {
+	styles?: WMasterTextStyles;
+	roundTrip?: WMasterRoundTrip;
 }

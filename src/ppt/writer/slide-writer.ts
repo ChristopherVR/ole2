@@ -25,7 +25,8 @@ const SLIDE_FLAG_MASTER_BACKGROUND = 0x0004;
 /**
  * A real (COM-written) slide's `SlideAtom.masterIdRef` is NOT the master's
  * persist id: this deck's only master is persist id 2, yet every slide's
- * own `SlideAtom` carries this exact sentinel (`0x80000000`) instead.
+ * own `SlideAtom` carries `0x80000000` instead, which is the master's own
+ * `SlidePersistAtom.slideId` (see `master-list.ts`).
  * Writing the actual persist id there (this writer's earlier, more
  * "logical" but wrong assumption) failed real PowerPoint's Office File
  * Validation outright, confirmed fixed by COM re-verification; PowerPoint
@@ -78,11 +79,14 @@ function buildMasterSlideAtom(): Uint8Array {
 
 /**
  * Build a framed `Slide` container (RT.Slide) for one slide.
+ *
+ * @param masterIdRef - The slide id of the main master the slide follows
+ *   (`masterSlideId` in `master-list.ts`).
  */
 export function buildSlideContainer(
 	slide: WSlide,
 	slideRect: WRect,
-	_masterIdRef: number,
+	masterIdRef: number,
 	notesIdRef: number,
 	fonts: string[],
 	drawingId: number,
@@ -91,7 +95,15 @@ export function buildSlideContainer(
 	mediaEmbeds: MediaCollector,
 ): Uint8Array {
 	const data = new ByteWriter()
-		.bytes(buildSlideAtom(SLIDE_MASTER_ID_SENTINEL, notesIdRef, Boolean(slide.backgroundRgb)))
+		.bytes(
+			buildSlideAtom(
+				// A master is named by its slide id (>= 0x80000000), never by a
+				// persist id; anything smaller falls back to the first master.
+				masterIdRef >= SLIDE_MASTER_ID_SENTINEL ? masterIdRef : SLIDE_MASTER_ID_SENTINEL,
+				notesIdRef,
+				Boolean(slide.backgroundRgb),
+			),
+		)
 		.bytes(
 			buildDrawing(
 				slideRect,

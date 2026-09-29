@@ -142,7 +142,10 @@ export function buildDocumentContainer(input: {
 	widthEmu: number;
 	heightEmu: number;
 	fonts: string[];
-	masterPersistAtom: Uint8Array;
+	/** The single master's persist atom; ignored when `masterPersistAtoms` is given. */
+	masterPersistAtom?: Uint8Array;
+	/** Every main master's persist atom, in master order. */
+	masterPersistAtoms?: Uint8Array[];
 	slidePersistAtoms: Uint8Array[];
 	dggContainer: Uint8Array;
 	paddingBytes?: number;
@@ -165,7 +168,9 @@ export function buildDocumentContainer(input: {
 	if (input.soundCollection) {
 		w.bytes(input.soundCollection);
 	}
-	w.bytes(drawingGroup).bytes(buildSlideListWithText([input.masterPersistAtom], 1));
+	const masterAtoms =
+		input.masterPersistAtoms ?? (input.masterPersistAtom ? [input.masterPersistAtom] : []);
+	w.bytes(drawingGroup).bytes(buildSlideListWithText(masterAtoms, 1));
 	if (input.paddingBytes) {
 		w.bytes(buildPaddingTag(input.paddingBytes));
 	}

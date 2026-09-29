@@ -10,13 +10,10 @@
 
 import { buildPictureStore } from './bstore-writer.js';
 import { ByteWriter } from './byte-writer.js';
-import {
-	buildDocumentContainer,
-	buildSlidePersistAtom,
-	MASTER_SLIDE_ID_SENTINEL,
-} from './document-writer.js';
+import { buildDocumentContainer, buildSlidePersistAtom } from './document-writer.js';
 import { buildExObjList } from './ex-obj-list-writer.js';
 import { HyperlinkCollector } from './hyperlink-writer.js';
+import { masterSlideId, resolveDeckMasters, slideMasterIndex } from './master-list.js';
 import { MASTER_PLACEHOLDER_ORDER } from './master-placeholders-writer.js';
 import { masterStyleFonts } from './master-style-fonts.js';
 import { buildOtherTextStyle } from './master-text-styles-writer.js';
@@ -24,7 +21,7 @@ import { buildSoundCollection, MediaCollector } from './media-writer.js';
 import { buildNotesContainer } from './notes-writer.js';
 import { buildExOleObjStg, OleCollector } from './ole-writer.js';
 import { buildMainMasterContainer, buildSlideContainer } from './slide-writer.js';
-import type { WDeck } from './write-model.js';
+import type { WDeck, WMaster } from './write-model.js';
 
 /** Count every shape (recursively) in one drawing's shape list, +1 for the patriarch. */
 function countDrawingShapes(shapes: WDeck['slides'][number]['shapes']): number {
@@ -42,7 +39,7 @@ function countDrawingShapes(shapes: WDeck['slides'][number]['shapes']): number {
 }
 
 /** Collect every distinct font name referenced anywhere in the deck. */
-function collectFonts(deck: WDeck): string[] {
+function collectFonts(deck: WDeck, masters: WMaster[]): string[] {
 	const collect = (shape: WDeck['slides'][number]['shapes'][number]): string[] => {
 		if (shape.kind === 'group') {
 			return shape.children.flatMap(collect);
@@ -56,12 +53,12 @@ function collectFonts(deck: WDeck): string[] {
 	};
 	// Font 0 is the default face of every run and master level that names
 	// none: the theme's minor (body) face, as PowerPoint's own SaveAs orders it.
-	const themeMinor = deck.master?.themeFonts?.minor;
+	const themeMinor = masters[0]?.roundTrip?.themeFonts?.minor;
 	const fonts = Array.from(
 		new Set([
 			...(themeMinor ? [themeMinor] : []),
 			...deck.slides.flatMap((slide) => slide.shapes.flatMap(collect)),
-			...masterStyleFonts(deck.masterStyles),
+			...masters.flatMap((master) => masterStyleFonts(master.styles)),
 		]),
 	);
 	return fonts.length > 0 ? fonts : ['Calibri'];
@@ -78,7 +75,7 @@ export interface DocumentStreamLayout {
 
 /** Persist id of the DocumentContainer. */
 export const DOC_ID = 1;
-/** Persist id of the MainMaster. */
+/** Persist id of the first MainMaster; further masters follow it in order. */
 export const MASTER_ID = 2;
 
 /** Lay out the full unencrypted "PowerPoint Document" stream content. */
@@ -86,26 +83,29 @@ export function layoutDocumentStream(deck: WDeck): DocumentStreamLayout {
 	const slideRect = { x: 0, y: 0, w: deck.widthEmu, h: deck.heightEmu };
 	const notesRect = { x: 0, y: 0, w: deck.heightEmu, h: deck.widthEmu };
 
-	const slideIds = deck.slides.map((_, i) => 3 + i);
-	let nextId = 3 + deck.slides.length;
+	const masters = resolveDeckMasters(deck);
+	const masterIds = masters.map((_, i) => MASTER_ID + i);
+	const firstSlideId = MASTER_ID + masters.length;
+	const slideIds = deck.slides.map((_, i) => firstSlideId + i);
+	let nextId = firstSlideId + deck.slides.length;
 	const notesIds = deck.slides.map((slide) => (slide.notesParagraphs?.length ? nextId++ : 0));
 
-	// Drawing ids: 1 = master, 2..N+1 = slides in order, then one per slide
-	// that has notes. Every drawing in the document needs a distinct id (see
-	// `drawing-writer.ts#buildDrawing`'s doc comment).
-	const masterDrawingId = 1;
-	const slideDrawingIds = deck.slides.map((_, i) => 2 + i);
-	let nextDrawingId = 2 + deck.slides.length;
+	// Drawing ids: 1..M = masters, then the slides in order, then one per
+	// slide that has notes. Every drawing in the document needs a distinct id
+	// (see `drawing-writer.ts#buildDrawing`'s doc comment).
+	const masterDrawingIds = masters.map((_, i) => 1 + i);
+	const slideDrawingIds = deck.slides.map((_, i) => 1 + masters.length + i);
+	let nextDrawingId = 1 + masters.length + deck.slides.length;
 	const notesDrawingIds = deck.slides.map((slide) =>
 		slide.notesParagraphs?.length ? nextDrawingId++ : 0,
 	);
 	const shapesPerDrawing = [
-		1 + MASTER_PLACEHOLDER_ORDER.length, // master: patriarch + its placeholders
+		...masters.map(() => 1 + MASTER_PLACEHOLDER_ORDER.length), // patriarch + placeholders
 		...deck.slides.map((slide) => countDrawingShapes(slide.shapes)),
 		...deck.slides.filter((s) => s.notesParagraphs?.length).map(() => 2), // patriarch + body placeholder
 	];
 
-	const fonts = collectFonts(deck);
+	const fonts = collectFonts(deck, masters);
 	const { dggContainer, picturesStream } = buildPictureStore(deck.pictures, shapesPerDrawing);
 
 	// Document-wide: every hyperlink/click-action target, every OLE embed, and
@@ -122,7 +122,7 @@ export function layoutDocumentStream(deck: WDeck): DocumentStreamLayout {
 		buildSlideContainer(
 			slide,
 			slideRect,
-			MASTER_ID,
+			masterSlideId(slideMasterIndex(slide.masterIndex, masters.length)),
 			notesIds[i]!,
 			fonts,
 			slideDrawingIds[i]!,
@@ -148,17 +148,19 @@ export function layoutDocumentStream(deck: WDeck): DocumentStreamLayout {
 		)
 		.filter((c): c is Uint8Array => c !== undefined);
 
-	const masterContainer = buildMainMasterContainer(
-		slideRect,
-		masterDrawingId,
-		hyperlinks,
-		oleEmbeds,
-		mediaEmbeds,
-		deck.masterStyles,
-		fonts,
-		deck.master,
+	const masterContainers = masters.map((master, i) =>
+		buildMainMasterContainer(
+			slideRect,
+			masterDrawingIds[i]!,
+			hyperlinks,
+			oleEmbeds,
+			mediaEmbeds,
+			master.styles,
+			fonts,
+			master.roundTrip,
+		),
 	);
-	const masterPersistAtom = buildSlidePersistAtom(MASTER_ID, MASTER_SLIDE_ID_SENTINEL);
+	const masterPersistAtoms = masterIds.map((id, i) => buildSlidePersistAtom(id, masterSlideId(i)));
 	// flags=4: real (COM-written) files set this bit on a SLIDE's own
 	// SlidePersistAtom (never on a master's); see buildSlidePersistAtom's doc.
 	const slidePersistAtoms = slideIds.map((id, i) => buildSlidePersistAtom(id, 256 + i, 4));
@@ -184,12 +186,12 @@ export function layoutDocumentStream(deck: WDeck): DocumentStreamLayout {
 		widthEmu: deck.widthEmu,
 		heightEmu: deck.heightEmu,
 		fonts,
-		masterPersistAtom,
+		masterPersistAtoms,
 		slidePersistAtoms,
 		dggContainer,
 		exObjList,
 		soundCollection,
-		otherTextStyle: buildOtherTextStyle(deck.masterStyles, (name) => {
+		otherTextStyle: buildOtherTextStyle(masters[0]?.styles, (name) => {
 			const idx = name ? fonts.indexOf(name) : -1;
 			return idx >= 0 ? idx : undefined;
 		}),
@@ -197,7 +199,7 @@ export function layoutDocumentStream(deck: WDeck): DocumentStreamLayout {
 	const maxPersistId = nextId - 1;
 	const contentSizeWithoutPadding =
 		buildDocumentContainer(documentInput).length +
-		masterContainer.length +
+		masterContainers.reduce((sum, c) => sum + c.length, 0) +
 		slideContainers.reduce((sum, c) => sum + c.length, 0) +
 		notesContainers.reduce((sum, c) => sum + c.length, 0) +
 		oleStgRecords.reduce((sum, c) => sum + c.length, 0);
@@ -211,7 +213,7 @@ export function layoutDocumentStream(deck: WDeck): DocumentStreamLayout {
 		layout.bytes(bytes);
 	};
 	place(DOC_ID, documentContainer);
-	place(MASTER_ID, masterContainer);
+	masterIds.forEach((id, i) => place(id, masterContainers[i]!));
 	slideIds.forEach((id, i) => place(id, slideContainers[i]!));
 	let notesCursor = 0;
 	notesIds.forEach((id) => {
