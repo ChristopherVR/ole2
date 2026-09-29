@@ -1,6 +1,6 @@
 {
 	"name": "@christophervr/ole2",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Shared MS-CFB compound-file and legacy Microsoft Office binary codecs",
 	"keywords": [
 		"biff8",
