@@ -10,10 +10,13 @@
 
 import { buildPictureStore } from './bstore-writer.js';
 import { ByteWriter } from './byte-writer.js';
-import { buildDocumentContainer, buildSlidePersistAtom } from './document-writer.js';
+import {
+	buildDocumentContainer,
+	buildSlidePersistAtom,
+	MASTER_SLIDE_ID_SENTINEL,
+} from './document-writer.js';
 import { buildExObjList } from './ex-obj-list-writer.js';
 import { HyperlinkCollector } from './hyperlink-writer.js';
-import { masterSlideId, resolveDeckMasters, slideMasterIndex } from './master-list.js';
 import { MASTER_PLACEHOLDER_ORDER } from './master-placeholders-writer.js';
 import { masterStyleFonts } from './master-style-fonts.js';
 import { buildOtherTextStyle } from './master-text-styles-writer.js';
@@ -22,6 +25,34 @@ import { buildNotesContainer } from './notes-writer.js';
 import { buildExOleObjStg, OleCollector } from './ole-writer.js';
 import { buildMainMasterContainer, buildSlideContainer } from './slide-writer.js';
 import type { WDeck, WMaster } from './write-model.js';
+
+/**
+ * `[MS-PPT]` names a main master by the `slideId` of its `SlidePersistAtom`
+ * in the master list, and a slide's `SlideAtom.masterIdRef` refers to that
+ * id, never to the master's persist id. The first master's id,
+ * `0x80000000`, is the value PowerPoint writes for a single-master deck;
+ * further masters take consecutive ids.
+ */
+function masterSlideId(index: number): number {
+	return MASTER_SLIDE_ID_SENTINEL + index;
+}
+
+/** The deck's main masters in write order; one from the legacy fields when `masters` is absent. */
+function resolveDeckMasters(deck: WDeck): WMaster[] {
+	return deck.masters && deck.masters.length > 0
+		? deck.masters
+		: [{ styles: deck.masterStyles, roundTrip: deck.master }];
+}
+
+/** A slide's master index, falling back to the first master when absent or out of range. */
+function slideMasterIndex(masterIndex: number | undefined, masterCount: number): number {
+	return masterIndex !== undefined &&
+		Number.isInteger(masterIndex) &&
+		masterIndex >= 0 &&
+		masterIndex < masterCount
+		? masterIndex
+		: 0;
+}
 
 /** Count every shape (recursively) in one drawing's shape list, +1 for the patriarch. */
 function countDrawingShapes(shapes: WDeck['slides'][number]['shapes']): number {

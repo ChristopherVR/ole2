@@ -26,7 +26,7 @@ const SLIDE_FLAG_MASTER_BACKGROUND = 0x0004;
  * A real (COM-written) slide's `SlideAtom.masterIdRef` is NOT the master's
  * persist id: this deck's only master is persist id 2, yet every slide's
  * own `SlideAtom` carries `0x80000000` instead, which is the master's own
- * `SlidePersistAtom.slideId` (see `master-list.ts`).
+ * `SlidePersistAtom.slideId` (see `document-stream-layout.ts`).
  * Writing the actual persist id there (this writer's earlier, more
  * "logical" but wrong assumption) failed real PowerPoint's Office File
  * Validation outright, confirmed fixed by COM re-verification; PowerPoint
@@ -81,7 +81,7 @@ function buildMasterSlideAtom(): Uint8Array {
  * Build a framed `Slide` container (RT.Slide) for one slide.
  *
  * @param masterIdRef - The slide id of the main master the slide follows
- *   (`masterSlideId` in `master-list.ts`).
+ *   (`masterSlideId` in `document-stream-layout.ts`).
  */
 export function buildSlideContainer(
 	slide: WSlide,
