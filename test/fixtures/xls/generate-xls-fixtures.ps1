@@ -7,6 +7,9 @@ $out = $PSScriptRoot
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
 $excel.DisplayAlerts = $false
+# Excel.UserName is the user's Office-wide name (saved in the registry): stamp the
+# fixtures with a neutral name, then put the user's own name back in the finally block.
+$previousUserName = $excel.UserName
 $excel.UserName = 'Fixture Author'
 
 function Set-DocProperty($wb, $name, $value) {
@@ -216,6 +219,7 @@ try {
 	Save-Xls $wb 'workbook-encrypted.xls' 'pass'
 }
 finally {
+	$excel.UserName = $previousUserName
 	$excel.Quit()
 	[void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel)
 }
