@@ -18,8 +18,8 @@ if (paragraphs) {
 	},
 	{
 		slug: 'excel', title: 'Legacy Excel', kicker: 'XLS · BIFF8',
-		description: 'Preview a bounded first worksheet in BIFF8 Excel files and perform guarded numeric and string cell edits.',
-		intro: 'The Excel API reads a rectangular preview from the first worksheet and edits selected cell records. It works with BIFF8 `.xls` streams and OLE-wrapped workbooks.',
+		description: 'Read whole BIFF8 Excel workbooks, preview a bounded first worksheet and perform guarded numeric and string cell edits.',
+		intro: 'The Excel API reads whole workbooks with `readXlsWorkbook` (every sheet, values, cached formula results and decoded formula text, styles, merges, views, comments and hyperlinks), reads a rectangular preview from the first worksheet, and edits selected cell records. It works with BIFF8 `.xls` streams and OLE-wrapped workbooks.',
 		sections: [
 			{ title: 'What works', body: '`readOleXlsGrid` returns a bounded grid (50 rows by 26 columns by default). Numeric edits update existing NUMBER or RK cells; string edits maintain the shared string table and can rebuild a single worksheet when the structure is recognized.', bullets: ['Custom row and column bounds can be passed to the grid reader.', 'String edits can replace supported cells or add a cell when the single-sheet layout is safe to resize.', 'Unsupported edits return the exact original input bytes.'] },
 			{ title: 'Known limits', body: 'This is a data preview and cell writer, not an Excel calculation engine or workbook renderer.', bullets: ['Only the first worksheet is exposed by the grid API.', 'Formula values are not evaluated; shared strings split across CONTINUE records may not all resolve.', 'Resizing is limited to single-worksheet workbooks. Multi-sheet files permit only safe in-place edits.', 'Numeric writes target existing NUMBER or RK cells; string writes are bounded by understood SST and worksheet structures.'] },

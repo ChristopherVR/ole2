@@ -12,7 +12,7 @@ npm install @christophervr/ole2
 
 - MS-CFB/OLE2 compound-file stream reading and writing, including mini streams, FAT/DIFAT and directory metadata.
 - Word 97-2003 binary `.doc` main-body text reading and guarded existing-paragraph text editing.
-- Excel BIFF8 `.xls` first-worksheet previews and bounded numeric/string cell edits.
+- Excel BIFF8 `.xls` workbook reading (`readXlsWorkbook`: every sheet, cell values, cached formula results and decoded formula text, styles, merges, column and row sizes, views, comments, hyperlinks, defined names), plus first-worksheet previews and bounded numeric/string cell edits.
 - PowerPoint `.ppt` binary export from a framework-neutral model, including text, shapes, pictures, notes, embedded objects and optional RC4 encryption, plus record headers, traversal and constants.
 - Visio and Publisher binary structure inspection, plus standard OLE document-property reading and bounded text-property edits. Drawing and publication page content is not yet decoded or editable.
 - Path-based compound stream edits preserve nested storage layout and all bytes outside the edited stream.
@@ -39,6 +39,8 @@ const grid = readOleXlsGrid(xlsBytes); // Uint8Array; first worksheet, bounded p
 const edited = writeOleXlsNumericCellEdit(xlsBytes, { row: 0, col: 0, value: 42 });
 if (edited === xlsBytes) console.log('This edit was not supported.');
 ```
+
+`readXlsWorkbook(xlsBytes)` returns a structured `XlsWorkbook` (sheets, cells, XF styles with fonts, fills, borders and number formats, merges, views, comments, hyperlinks, names). It throws `XlsReadError` with `code` `'encrypted'`, `'unsupported-version'` (BIFF5 and earlier) or `'corrupt'`. It never evaluates formulas: cells carry the cached result Excel saved, and the formula text when every token is understood. Charts, pictures, shapes, conditional formatting, data validation, pivot tables and VBA are listed in `unsupported` rather than decoded.
 
 Excel previews do not evaluate formulas or resolve every continued shared string. Editing is constrained by record type, workbook structure and string-table layout. Unsupported edits return the exact input byte array; callers should check that result before reporting success.
 
