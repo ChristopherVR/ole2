@@ -17,7 +17,7 @@ export interface PptShapeRecord {
 	shapeId: number; shapeType: number; flags: number;
 	kind: 'rectangle' | 'ellipse' | 'line' | 'picture' | 'text-box' | 'group' | 'unknown';
 	headerOffset: number; recordEnd: number; parentGroupId?: number;
-	anchor?: { kind: 'client-small' | 'client-large' | 'child'; headerOffset: number; bounds: PptShapeBounds };
+	anchor?: { kind: 'client-small' | 'client-large' | 'child'; headerOffset: number; bounds?: PptShapeBounds; rawValues?: number[] };
 	coordinateSpace: 'slide-master-units' | 'group-child-master-units' | 'unknown';
 	groupBounds?: PptShapeBounds; name?: string; rotation: number; mirrored: boolean;
 	textIndexes: number[]; textReference: 'inline' | 'outline' | 'none' | 'unresolved';
@@ -40,8 +40,8 @@ export function pptShapeChildren(view: DataView, parent: PptRecord): PptRecord[]
 
 function bounds(view: DataView, rec: PptRecord): PptShapeBounds {
 	const d = rec.dataOffset;
-	// Large ClientAnchor is inspected in the consumer-observed left/top order;
-	// writes remain refused until separately native-validated for that layout.
+	// Only small ClientAnchor and OfficeArt child/group RECT layouts call this.
+	// Large ClientAnchor axis order is kept undecoded pending retained evidence.
 	const [x, y, right, bottom] = rec.recLen === 8
 		? [view.getInt16(d + 2, true), view.getInt16(d, true), view.getInt16(d + 4, true), view.getInt16(d + 6, true)]
 		: [view.getInt32(d, true), view.getInt32(d + 4, true), view.getInt32(d + 8, true), view.getInt32(d + 12, true)];
@@ -120,8 +120,10 @@ export function readPptSlideShapes(input: Uint8Array, limits: PptShapeReadLimits
 					const rec = anchors[0]!;
 					if (rec.recVer !== 0 || rec.recInstance !== 0 || (rec.recType === OA.ClientAnchor ? rec.recLen !== 8 && rec.recLen !== 16 : rec.recLen !== 16))
 						throw new PptTextError('corrupt', 'Invalid OfficeArt anchor');
-					shape.anchor = { kind: rec.recType === OA.ChildAnchor ? 'child' : rec.recLen === 8 ? 'client-small' : 'client-large', headerOffset: rec.headerOffset, bounds: bounds(view, rec) };
-					shape.coordinateSpace = rec.recType === OA.ChildAnchor ? 'group-child-master-units' : item.group !== undefined || flags & 2 ? 'unknown' : 'slide-master-units';
+					const largeClient = rec.recType === OA.ClientAnchor && rec.recLen === 16;
+					shape.anchor = { kind: rec.recType === OA.ChildAnchor ? 'child' : rec.recLen === 8 ? 'client-small' : 'client-large', headerOffset: rec.headerOffset,
+						bounds: largeClient ? undefined : bounds(view, rec), rawValues: largeClient ? Array.from({ length: 4 }, (_, i) => view.getInt32(rec.dataOffset + i * 4, true)) : undefined };
+					shape.coordinateSpace = largeClient ? 'unknown' : rec.recType === OA.ChildAnchor ? 'group-child-master-units' : item.group !== undefined || flags & 2 ? 'unknown' : 'slide-master-units';
 				}
 				const group = children.find(rec => rec.recType === OA.FSPGR);
 				if (group) {
@@ -163,7 +165,7 @@ export function readPptSlideShapes(input: Uint8Array, limits: PptShapeReadLimits
 				else if (flags & ~0xa00 || !(flags & 0x800) || shape.rotation || shape.propertyIds.includes(0x301)) shape.geometryRefusal = 'Shape has unsupported flags or inherited/rotated geometry';
 				else if (!(flags & 0x200) || anchors.length !== 1 || shape.anchor?.kind !== 'client-small') shape.geometryRefusal = 'Only one explicit small client anchor is editable';
 				else if (shape.kind !== 'rectangle' && shape.kind !== 'text-box') shape.geometryRefusal = 'Primitive shape kind is not native-validated for geometry edits';
-				else if (shape.anchor.bounds.width <= 0 || shape.anchor.bounds.height <= 0) shape.geometryRefusal = 'Nonpositive shape extents are unsupported';
+				else if (!shape.anchor.bounds || shape.anchor.bounds.width <= 0 || shape.anchor.bounds.height <= 0) shape.geometryRefusal = 'Nonpositive or undecoded shape extents are unsupported';
 				shapes.push(shape); continue;
 			}
 			let parentGroup = item.group;

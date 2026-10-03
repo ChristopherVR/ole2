@@ -74,6 +74,8 @@ export class PptShape {
 	get rotation(): number { return this.#read().rotation; }
 	get textReference(): PptShapeRecord['textReference'] { return this.#read().textReference; }
 	get geometryRefusal(): string | undefined { return this.#read().geometryRefusal; }
+	/** Field-order-preserving values for undecoded large client anchors. */
+	get rawAnchorValues(): readonly number[] | undefined { const values = this.#read().anchor?.rawValues; return values && Object.freeze([...values]); }
 	get groupBounds(): Readonly<PptShapeBounds> | undefined { const bounds = this.#read().groupBounds; return bounds && Object.freeze({ ...bounds }); }
 	get bounds(): Readonly<PptShapeBounds> | undefined { const bounds = this.#read().anchor?.bounds; return bounds && Object.freeze({ ...bounds }); }
 	set bounds(value: PptShapeBounds) { this.#write(value); }
@@ -128,7 +130,7 @@ export class PptDocument extends Ole2DocumentBase {
 	#editShape(slideId: number, persistId: number, original: PptShapeRecord, value: PptShapeBounds): void {
 		const revision = this.revision;
 		const current = this.#readShape(slideId, persistId, original);
-		if (!current.anchor) throw new UnsupportedOle2EditError('PPT shape has no decoded anchor');
+		if (!current.anchor?.bounds) throw new UnsupportedOle2EditError('PPT shape has no decoded anchor');
 		const result = editPptShapeBounds(this.getBytes(), { slideId, persistId, shapeId: current.shapeId, expectedHeaderOffset: current.headerOffset, expectedBounds: current.anchor.bounds, bounds: value });
 		if (this.revision !== revision) throw new UnsupportedOle2EditError('Document changed during the geometry edit');
 		if (result.status === 'unsupported') throw new UnsupportedOle2EditError(result.reason);

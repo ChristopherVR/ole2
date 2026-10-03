@@ -28,7 +28,7 @@ export function editPptShapeBounds(input: Uint8Array, edit: {
 		const matches = slides.length === 1 ? slides[0]!.shapes.filter(shape => shape.shapeId === shapeId) : [];
 		if (matches.length !== 1) return reject('Shape identity is missing or ambiguous');
 		const shape = matches[0]!;
-		if (!shape.anchor || !equalPptShapeBounds(shape.anchor.bounds, expected) || (expectedHeaderOffset !== undefined && shape.headerOffset !== expectedHeaderOffset))
+		if (!shape.anchor?.bounds || !equalPptShapeBounds(shape.anchor.bounds, expected) || (expectedHeaderOffset !== undefined && shape.headerOffset !== expectedHeaderOffset))
 			return reject('Shape identity or expected geometry no longer matches');
 		if (![next.x, next.y, next.width, next.height].every(Number.isSafeInteger) || next.width <= 0 || next.height <= 0)
 			return reject('Geometry must use integer master units and positive extents');
@@ -48,7 +48,7 @@ export function editPptShapeBounds(input: Uint8Array, edit: {
 		const bytes = replaceCompoundFileStream(input, ['PowerPoint Document'], out);
 		if (bytes === input) return reject('Compound stream cannot be safely replaced');
 		const candidate = readPptSlideShapes(bytes).filter(slide => slide.slideId === slideId && slide.persistId === persistId).flatMap(slide => slide.shapes.filter(item => item.shapeId === shapeId));
-		if (candidate.length !== 1 || candidate[0]!.headerOffset !== shape.headerOffset || !candidate[0]!.anchor || !equalPptShapeBounds(candidate[0]!.anchor!.bounds, next))
+		if (candidate.length !== 1 || candidate[0]!.headerOffset !== shape.headerOffset || !candidate[0]!.anchor?.bounds || !equalPptShapeBounds(candidate[0]!.anchor!.bounds!, next))
 			return reject('Edited shape failed candidate validation');
 		return { status: 'edited', bytes };
 	} catch (error) { return reject(error instanceof Error ? error.message : 'Malformed PPT shape'); }

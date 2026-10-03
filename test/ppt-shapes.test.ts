@@ -115,7 +115,8 @@ describe('active preserved OfficeArt shape model', () => {
 	it('inspects a large anchor without treating it as writable or guessing a missing shape-type flag', async () => {
 		const input = await buildPptFile({ widthEmu: 9144000, heightEmu: 5143500, pictures: [], slides: [{ shapes: [{ kind: 'shape', spt: 1, isConnector: false, anchor: { x: 79375000, y: 1587500, w: 1270000, h: 635000 } }] }] });
 		const doc = new PptDocument(input), shape = doc.slides[0]!.shapes[0]!;
-		expect(shape.anchorKind).toBe('client-large'); expect(shape.bounds).toEqual({ x: 50000, y: 1000, width: 800, height: 400 });
+		expect(shape.anchorKind).toBe('client-large'); expect(shape.bounds).toBeUndefined(); expect(shape.coordinateSpace).toBe('unknown');
+		expect(shape.rawAnchorValues).toEqual([50000, 1000, 50800, 1400]);
 		expect(shape.kind).toBe('unknown'); expect(shape.shapeType).toBe(1);
 		expect(() => { shape.x += 8; }).toThrow(UnsupportedOle2EditError); expect(doc.serialize()).toEqual(input);
 	});
