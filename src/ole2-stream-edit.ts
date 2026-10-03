@@ -118,7 +118,7 @@ function processCompoundFileStream(
 		for (const id of fatIds) {
 			const bytes = sector(id),
 				dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-			for (let j = 0; j < sectorSize / 4; j++) fat.push(dv.getUint32(j * 4, true));
+			for (let j = 0; j < sectorSize / 4 && fat.length < sectorCount; j++) fat.push(dv.getUint32(j * 4, true));
 		}
 		const exactChain = (table: readonly number[], start: number, bytes: number, unit: number) =>
 			chain(table, start, Math.ceil(bytes / unit));
@@ -205,10 +205,11 @@ function processCompoundFileStream(
 		const metadataSectors = [...fatIds, ...difatIds, ...dirSectors, ...miniFatSectors];
 		if (new Set(metadataSectors).size !== metadataSectors.length) return reject();
 		const miniFat: number[] = [];
+		const miniCapacity = Math.floor(Math.min(root.size, sectorCount * sectorSize) / miniSize);
 		for (const id of miniFatSectors) {
 			const bytes = sector(id),
 				dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-			for (let j = 0; j < sectorSize / 4; j++) miniFat.push(dv.getUint32(j * 4, true));
+			for (let j = 0; j < sectorSize / 4 && miniFat.length < miniCapacity; j++) miniFat.push(dv.getUint32(j * 4, true));
 		}
 		const reserved = new Set<number>([...fatIds, ...difatIds, ...dirSectors, ...miniFatSectors]);
 		const regularUsed = new Set<number>(reserved);

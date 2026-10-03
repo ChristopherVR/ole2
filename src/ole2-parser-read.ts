@@ -129,12 +129,13 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 		throw new Ole2ParseError('Invalid DIFAT allocation table');
 	}
 
-	// Build the full FAT array
+	// FAT padding cannot address sectors beyond the physical file. Validate
+	// every listed FAT sector, but materialize only addressable entries.
 	const fatEntries: number[] = [];
 	for (const fatSector of fatSectors) {
 		const fatData = readSector(fatSector);
 		const fatView = new DataView(fatData.buffer, fatData.byteOffset, fatData.byteLength);
-		for (let i = 0; i < sectorSize / 4; i++) {
+		for (let i = 0; i < sectorSize / 4 && fatEntries.length < sectorCount; i++) {
 			fatEntries.push(fatView.getUint32(i * 4, true));
 		}
 	}
@@ -178,23 +179,6 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 		const raw = readSectorChain(startSector);
 		if (raw.length < size) throw new Ole2ParseError('Truncated stream sector chain');
 		return raw.subarray(0, size);
-	}
-
-	// Build the mini FAT
-	const miniFatEntries: number[] = [];
-	if (firstMiniFATSector <= MAXREGSECT && totalMiniFATSectors > 0) {
-		const miniFatRaw = readSectorChain(firstMiniFATSector);
-		if (miniFatRaw.length !== totalMiniFATSectors * sectorSize) {
-			throw new Ole2ParseError('Unexpected mini FAT chain length');
-		}
-		const miniFatView = new DataView(
-			miniFatRaw.buffer,
-			miniFatRaw.byteOffset,
-			miniFatRaw.byteLength,
-		);
-		for (let i = 0; i < miniFatRaw.length / 4; i++) {
-			miniFatEntries.push(miniFatView.getUint32(i * 4, true));
-		}
 	}
 
 	// Read directory entries
@@ -263,6 +247,20 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 	let miniStreamData: Uint8Array | undefined;
 	if (rootEntry && rootEntry.startSector <= MAXREGSECT) {
 		miniStreamData = readStream(rootEntry.startSector, rootEntry.size);
+	}
+	// Only mini sectors inside the root allocation can be addressed. Table
+	// padding remains legal and never becomes an unbounded JS-number array.
+	const miniFatEntries: number[] = [];
+	if (firstMiniFATSector <= MAXREGSECT && totalMiniFATSectors > 0) {
+		const miniFatRaw = readSectorChain(firstMiniFATSector);
+		if (miniFatRaw.length !== totalMiniFATSectors * sectorSize) {
+			throw new Ole2ParseError('Unexpected mini FAT chain length');
+		}
+		const miniFatView = new DataView(miniFatRaw.buffer, miniFatRaw.byteOffset, miniFatRaw.byteLength);
+		const miniCapacity = Math.floor((miniStreamData?.length ?? 0) / miniSectorSize);
+		for (let i = 0; i < miniFatRaw.length / 4 && i < miniCapacity; i++) {
+			miniFatEntries.push(miniFatView.getUint32(i * 4, true));
+		}
 	}
 
 	/**
