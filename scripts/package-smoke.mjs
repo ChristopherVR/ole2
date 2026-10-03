@@ -147,6 +147,20 @@ for (const col of [1, 2, 3]) for (const value of [37.125, 'Converted Ω 日本']
   assert.deepEqual(scalarModel.serialize(), saved);
   assert.equal(scalarModel.revision, revision);
 }
+const fontModel = parsePpt(new Uint8Array(readFileSync(new URL('./fixture.ppt', import.meta.url))));
+for (const [slideId, shapeName, before, after] of [[256, 'FixtureTitle', 28, 32], [257, 'FixtureUnicode', 24, 30]]) {
+  const text = fontModel.slides.find(slide => slide.slideId === slideId).shapes.find(shape => shape.name === shapeName).texts[0];
+  assert.equal(text.runsStatus, 'decoded');
+  assert.equal(text.runs[0].directFontSizePoints, before);
+  text.runs[0].directFontSizePoints = after;
+  assert.equal(text.runs[0].directFontSizePoints, after);
+}
+const fontSaved = fontModel.serialize();
+assert.equal(createHash('sha256').update(fontSaved).digest('hex'), '505d12c3569cba74b5b66a8df93960d1d0c1afdfdc33a598e73d06fcea24cc45');
+const fontRevision = fontModel.revision;
+assert.throws(() => { fontModel.slides[0].shapes.find(shape => shape.name === 'FixtureTitle').texts[0].runs[0].directFontSizePoints = 1.5; });
+assert.deepEqual(fontModel.serialize(), fontSaved);
+assert.equal(fontModel.revision, fontRevision);
 const pptModel = parsePpt(new Uint8Array(readFileSync(new URL('./fixture.ppt', import.meta.url))));
 pptModel.slides[0].texts[0].text = 'Native title updated';
 assert.equal(parsePpt(pptModel.serialize()).slides[0].texts[0].text, 'Native title updated');
@@ -259,6 +273,14 @@ void originalParagraph;
 // @ts-expect-error Alignment names describe logical direction, not physical left/right.
 parseDoc(input).paragraphs[0]!.directAlignment = 'left';
 const parsedNotes = parsePpt(input).slides[0]!.notes;
+const pptRun = parsePpt(input).slides[0]!.texts[0]!.runs[0]!;
+pptRun.directFontSizePoints = 32;
+const runText: string = pptRun.text;
+// @ts-expect-error Character run spans are immutable.
+pptRun.start = 1;
+// @ts-expect-error Run insertion is unsupported.
+parsePpt(input).slides[0]!.texts[0]!.runs.push(pptRun);
+void runText;
 if (parsedNotes) parsedNotes.texts[0]!.text = 'same-length notes';
 // @ts-expect-error Notes ownership cannot be replaced by a caller.
 parsePpt(input).slides[0]!.notes = undefined;

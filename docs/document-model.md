@@ -74,7 +74,7 @@ internal adapter hooks, not a supported external mutation API.
 | --- | --- | --- |
 | DOC | Existing plain paragraph text; guarded growth/shrink outside balanced main-story fields; existing exclusive direct bold/italic, font-size, none/single/double underline and logical paragraph-alignment operands | No style resolution, new formatting records, paragraph insertion/removal, table/object model writes, field-code/result editing or unsupported CP-table shifts; processing budgets apply |
 | XLS | Existing numeric/string cells; physical BLANK/MULBLANK to number/plain string/boolean/error; NUMBER/RK/MULRK to boolean/error and existing BOOLERR replacement and conversion to finite number/plain string | Missing cells, merged followers, formulas, recalculation, unsupported type changes and unsafe relocation records/layouts refuse; selected rich string becomes plain while retaining XF and other aliases |
-| PPT | Existing active fixed-length slide and notes-body text; supported small-anchor rectangle/text-box bounds | Inline shape text is linked by validated identity; outline refs may remain unresolved. Group/mirror/inherited/rotated/large-anchor edits refuse; no notes creation, field replacement or general rich-run reconstruction |
+| PPT | Existing active fixed-length slide and notes-body text; existing exclusive inline text-box font-size operands; supported small-anchor rectangle/text-box bounds | Inline shape text is linked by validated identity; outline refs may remain unresolved. Group/mirror/inherited/rotated/large-anchor edits refuse; no notes creation, field replacement or general rich-run reconstruction |
 | VSD v11 | Existing same-length UTF-16 shape text; exclusive top-level literal transforms within an unchanged stored block allocation | No older-version model, formula/style/master evaluation, fields or structural creation; block relocation, shared/overlapping blocks and dependent transform edits refuse |
 | CFB | Supported existing regular/mini stream resizing with path/hierarchy preservation | No new directory entries, external DIFAT expansion or variable-length v4 mini transitions; container support is separate from Office fidelity |
 
@@ -138,6 +138,14 @@ After a successful mutation, reacquire the run through the stable paragraph's
 `.runs` getter before another edit. No-op setters retain the handle and revision.
 
 ## Compatibility and migration
+
+PPT `text.runs` now returns readonly direct character-run handles instead of
+throwing. `runsStatus` distinguishes decoded, absent and unsupported formatting;
+`runsDiagnostic` explains decode limitations. A run's `directFontSizePoints`
+can replace an existing eligible inline text-box operand with integer points
+from 1 to 4000. Missing/inherited slots, shared ownership, mirrors, unsupported
+shape contexts and style insertion remain refused. Notes rich runs stay
+undecoded. See [PPT character runs](ppt-character-runs.md).
 
 `doc.paragraphs[index].runs[runIndex].directUnderline` edits an existing exclusive
 direct operand using `'none'`, `'single'` or `'double'`. Inherited, missing, opaque

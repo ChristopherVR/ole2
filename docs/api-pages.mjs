@@ -136,6 +136,15 @@ export const apiPages = [
         ]
       },
       {
+        "title": "Existing direct character runs",
+        "body": "text.runs exposes immutable UTF-16 spans and existing direct font-size exceptions. runsStatus distinguishes decoded, absent and unsupported formatting; runsDiagnostic explains unsupported records.",
+        "bullets": [
+          "run.directFontSizePoints replaces a uniquely owned existing two-byte size in eligible inline text boxes with an integer from 1 to 4000 points.",
+          "Undefined means unresolved inheritance. Missing operands, unknown formatting, shared persists, save metadata, mirrors and unsupported shape contexts refuse; no run splitting or style insertion occurs.",
+          "Native PowerPoint character-font comparisons and save/reopen match an unchanged save control except the declared sizes; notes IDs normalize in both controls."
+        ]
+      },
+      {
         "title": "Document model",
         "body": "Assign slides[index].texts[index].text or an eligible slides[index].notes.texts body atom, then serialize() after a supported edit.",
         "bullets": [
