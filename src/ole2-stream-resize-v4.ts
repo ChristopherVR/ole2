@@ -1,23 +1,9 @@
-/** Preservation-safe resizing of regular streams in v3 MS-CFB containers. */
+/** Preservation-safe resizing of regular streams in v4 MS-CFB containers. */
 import { readCompoundFileStream, replaceCompoundFileStream } from './ole2-stream-edit.js';
-import { resizeCompoundFileStreamV4 } from './ole2-stream-resize-v4.js';
 
 const END = 0xfffffffe, FREE = 0xffffffff, FAT = 0xfffffffd;
-const SECTOR = 512, FAT_ENTRIES = SECTOR / 4;
 
-export type CompoundFileStreamResizeFailure =
-	| 'invalid-or-missing-stream'
-	| 'unsafe-edit'
-	| 'unsupported-version'
-	| 'unsupported-difat'
-	| 'unsupported-layout'
-	| 'unsupported-mini-stream'
-	| 'unsupported-mini-transition'
-	| 'allocation-limit';
-
-export type CompoundFileStreamResizeResult =
-	| { ok: true; bytes: Uint8Array }
-	| { ok: false; bytes: Uint8Array; reason: CompoundFileStreamResizeFailure };
+import type { CompoundFileStreamResizeFailure, CompoundFileStreamResizeResult } from './ole2-stream-resize.js';
 
 type Slot = { id: number; name: string; type: number; left: number; right: number; child: number; start: number; size: number; offset: number };
 
@@ -83,7 +69,7 @@ function validateHierarchy(slots: Map<number, Slot>): void {
  * and (if necessary) header FAT count/DIFAT slots change. New payload sectors
  * are appended; old target sectors become free without erasing their bytes.
  *
- * Initial scope: v3, 512-byte sectors, header-only DIFAT (at most 109 FAT
+ * Scope: v4, 4096-byte sectors, header-only DIFAT (at most 109 FAT
  * sectors), cutoff 4096 or the existing cutoff-0 compatibility layout.
  * Resizing mini streams and transitions between mini/regular allocations are
  * explicitly unsupported. Same-length edits still use the existing validator.
@@ -94,19 +80,19 @@ function validateHierarchy(slots: Map<number, Slot>): void {
  * offsets and lengths inside its DOC/XLS/PPT stream payload.
  * Reference: [MS-CFB] sections 2.2, 2.3 and 2.6.
  */
-export function resizeCompoundFileStream(
+export function resizeCompoundFileStreamV4(
 	input: Uint8Array,
 	path: readonly string[],
 	replacement: Uint8Array,
 ): CompoundFileStreamResizeResult {
-	if (input.length >= 512 && new DataView(input.buffer, input.byteOffset, input.byteLength).getUint16(0x1a, true) === 4)
-		return resizeCompoundFileStreamV4(input, path, replacement);
 	const fail = (reason: CompoundFileStreamResizeFailure): CompoundFileStreamResizeResult => ({ ok: false, bytes: input, reason });
 	try {
-		if (input.length < SECTOR || !path.length || path.some((part) => !part)) return fail('invalid-or-missing-stream');
+		if (input.length < 512 || !path.length || path.some((part) => !part)) return fail('invalid-or-missing-stream');
 		const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
 		const read = (offset: number) => view.getUint32(offset, true);
-		if (view.getUint16(0x1a, true) !== 3) return fail('unsupported-version');
+		const version = view.getUint16(0x1a, true);
+		if (version !== 4) return fail('unsupported-version');
+		const SECTOR = 4096, FAT_ENTRIES = SECTOR / 4, DIRECTORY_ENTRIES = SECTOR / 128;
 		if (read(0x48) !== 0 || read(0x2c) > 109) return fail('unsupported-difat');
 		const cutoff = read(0x38);
 		if (cutoff !== 0 && cutoff !== 4096) return fail('unsupported-layout');
@@ -139,15 +125,20 @@ export function resizeCompoundFileStream(
 		}
 		if (fatIds.some((id) => fat[id] !== FAT)) return fail('unsafe-edit');
 		const slots = new Map<number, Slot>();
-		for (const [block, sector] of follow(fat, read(0x30)).entries()) {
-			for (let entry = 0; entry < 4; entry++) {
+		const directoryChain = follow(fat, read(0x30));
+		if (read(0x28) !== directoryChain.length) return fail('unsafe-edit');
+		for (const [block, sector] of directoryChain.entries()) {
+			for (let entry = 0; entry < DIRECTORY_ENTRIES; entry++) {
 				const offset = (sector + 1) * SECTOR + entry * 128, type = view.getUint8(offset + 66);
 				if (!type) continue;
 				const nameLength = view.getUint16(offset + 64, true);
 				if (![1, 2, 5].includes(type) || nameLength < 2 || nameLength > 64 || nameLength % 2 || view.getUint16(offset + nameLength - 2, true)) return fail('unsafe-edit');
 				let name = '';
 				for (let i = 0; i < nameLength - 2; i += 2) name += String.fromCharCode(view.getUint16(offset + i, true));
-				const id = block * 4 + entry;
+				// Existing safe stream reader rejects 64-bit lengths. Keep that
+				// refusal explicit here rather than truncating v4 directory sizes.
+				if (read(offset + 124) !== 0) return fail('unsafe-edit');
+				const id = block * DIRECTORY_ENTRIES + entry;
 				slots.set(id, { id, name, type, left: read(offset + 68), right: read(offset + 72), child: read(offset + 76), start: read(offset + 116), size: read(offset + 120), offset });
 			}
 		}
