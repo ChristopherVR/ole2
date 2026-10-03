@@ -84,6 +84,10 @@ export function buildOle2(
 	const names = [...streams.keys()].sort(compareDirEntryNames);
 	for (let i = 0; i < names.length; i++) {
 		const name = names[i]!;
+		// Validate even a single name, for which sorting never calls the comparator.
+		if (name.toUpperCase().length !== name.length) {
+			throw new Error('CFB stream names with expanding uppercase mappings are unsupported');
+		}
 		if (!name.length || name.length > 31 || /[\x00\\/:!]/.test(name)) {
 			throw new Error('CFB stream names must be 1-31 UTF-16 code units without NUL, \\, /, :, or !');
 		}

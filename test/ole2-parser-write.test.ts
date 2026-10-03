@@ -21,6 +21,7 @@ import { describe, it, expect } from 'vitest';
 
 import { buildOle2 } from '../src/ole2-parser-write.js';
 import { parseOle2 } from '../src/ole2-parser-read.js';
+import { compareDirEntryNames } from '../src/ole2-parser-write-helpers.js';
 
 const NOSTREAM = 0xffffffff;
 const DIR_ENTRY_SIZE = 128;
@@ -173,6 +174,20 @@ function inOrderNames(buffer: ArrayBuffer): string[] {
 }
 
 describe('buildOle2 directory ordering (CFB / PowerPoint compatibility)', () => {
+	it.each(['ß', 'ﬀ', 'ǰ'])('rejects unsupported expanding uppercase name %s', (name) => {
+		expect(() => buildOle2(new Map([[name, new Uint8Array([1])]]))).toThrow('expanding uppercase');
+		expect(() => buildOle2(new Map([[name, new Uint8Array([1])], ['s', new Uint8Array([2])]]))).toThrow('expanding uppercase');
+		expect(() => compareDirEntryNames(name, 's')).toThrow('expanding uppercase');
+	});
+
+	it('preserves supplementary surrogate pairs and counts their UTF-16 code units', () => {
+		const name = '😀'.repeat(15);
+		const buffer = buildOle2(new Map([[name, new Uint8Array([1])], ['s', new Uint8Array([2])]]));
+		expect(parseOle2(buffer).getStream(name)).toEqual(new Uint8Array([1]));
+		expect(findStreamViaTree(buffer, name)).toBe(true);
+		expect(Number.isFinite(compareDirEntryNames('😀', 'ab'))).toBe(true);
+		expect(() => buildOle2(new Map([['😀'.repeat(16), new Uint8Array([1])]]))).toThrow('1-31 UTF-16');
+	});
 	it.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 15, 16, 31, 32, 100])('satisfies red-black invariants for %i streams', (count) => {
 		const streams = new Map(Array.from({ length: count }, (_, i) => [`Stream${i}`, new Uint8Array([i])]) as [string, Uint8Array][]);
 		const buffer = buildOle2(streams);

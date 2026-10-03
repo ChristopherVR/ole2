@@ -56,13 +56,18 @@ export interface SectorChain {
  * @param a - First name.
  * @param b - Second name.
  * @returns Negative if `a < b`, positive if `a > b`, zero if equal.
+ * @throws When JavaScript uppercasing expands a name's UTF-16 length. This
+ * implementation does not supply MS-CFB's complete simple-uppercase table.
  */
 export function compareDirEntryNames(a: string, b: string): number {
+	const ua = a.toUpperCase();
+	const ub = b.toUpperCase();
+	if (ua.length !== a.length || ub.length !== b.length) {
+		throw new Error('CFB stream names with expanding uppercase mappings are unsupported');
+	}
 	if (a.length !== b.length) {
 		return a.length - b.length;
 	}
-	const ua = a.toUpperCase();
-	const ub = b.toUpperCase();
 	for (let i = 0; i < ua.length; i++) {
 		const diff = ua.charCodeAt(i) - ub.charCodeAt(i);
 		if (diff !== 0) {
