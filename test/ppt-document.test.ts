@@ -63,11 +63,11 @@ describe('PptDocument active text model', () => {
 		expect(Object.isFrozen(doc.slides)).toBe(true); expect(Object.isFrozen(slide.texts)).toBe(true);
 		expect(() => Object.defineProperty(node, 'slideId', { value: 999 })).toThrow();
 		expect(() => Object.defineProperty(slide, 'texts', { value: [] })).toThrow();
-		expect(() => slide.shapes).toThrow(UnsupportedOle2EditError);
+		expect(slide.shapes.map(shape => shape.shapeId)).toEqual([14338, 14339, 14340]);
 		expect(() => slide.notes).toThrow(UnsupportedOle2EditError);
 		expect(() => node.runs).toThrow(UnsupportedOle2EditError);
-		expect(doc.unsupported).toContain('shape-to-text-references');
-		expect(doc.capabilities.write).toEqual(['existing-text-fixed-utf16-length']);
+		expect(doc.unsupported).toContain('unresolved-outline-shape-text');
+		expect(doc.capabilities.write).toContain('existing-text-fixed-utf16-length');
 		expect(doc.capabilities.limitations).toContain('notes');
 		expect(Reflect.set(doc, 'kind', 'xls')).toBe(false);
 		expect(Reflect.set(doc, 'capabilities', {})).toBe(false);
