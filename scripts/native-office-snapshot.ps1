@@ -8,7 +8,9 @@ param(
     [switch]$CaptureFieldLocations,
     [switch]$CaptureWordCharacterFonts,
     [int]$MaxWordCharacters = 4096,
-    [switch]$CaptureCellTypes
+    [switch]$CaptureCellTypes,
+    [switch]$CapturePptCharacterFonts,
+    [int]$MaxPptCharacters = 4096
 )
 # Explicit fixture paths only. Never enumerate recent documents or run macros.
 $ErrorActionPreference = 'Stop'
@@ -124,11 +126,23 @@ try {
             $app.DisplayAlerts = 1 # ppAlertsNone
             $document = $app.Presentations.Open($inputFile, -1, 0, 0)
             $slides = @()
+            $pptCharacterCount = 0
             foreach ($slide in $document.Slides) {
                 $shapes = @()
                 foreach ($shape in $slide.Shapes) {
                     $text = if ($shape.HasTextFrame -and $shape.TextFrame.HasText) { $shape.TextFrame.TextRange.Text } else { '' }
-                    $shapes += [ordered]@{ name = $shape.Name; type = $shape.Type; text = $text; left = $shape.Left; top = $shape.Top; width = $shape.Width; height = $shape.Height }
+                    $shapeEntry = [ordered]@{ name = $shape.Name; type = $shape.Type; text = $text; left = $shape.Left; top = $shape.Top; width = $shape.Width; height = $shape.Height }
+                    if ($CapturePptCharacterFonts) {
+                        $pptCharacterCount += $text.Length
+                        if ($pptCharacterCount -gt $MaxPptCharacters) { throw "PPT character capture exceeds MaxPptCharacters=$MaxPptCharacters" }
+                        $characters = @()
+                        for ($index = 1; $index -le $text.Length; $index++) {
+                            $font = $shape.TextFrame.TextRange.Characters($index, 1).Font
+                            $characters += [ordered]@{ font = $font.Name; size = $font.Size; bold = $font.Bold; italic = $font.Italic; underline = $font.Underline; color = $font.Color.RGB }
+                        }
+                        $shapeEntry['characterFonts'] = $characters
+                    }
+                    $shapes += $shapeEntry
                 }
                 $notes = @()
                 foreach ($shape in $slide.NotesPage.Shapes) {
