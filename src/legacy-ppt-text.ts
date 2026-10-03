@@ -171,6 +171,8 @@ export function editPptSlideText(input: Uint8Array, edit: {
 		const atom = model.slides[edit.slideIndex]?.texts[edit.textIndex];
 		if (!atom || atom.text !== edit.expectedText) return reject('Text location or expected text does not match');
 		if (edit.text === atom.text) return { status: 'unchanged', bytes: input };
+		if (model.slides.reduce((count, slide) => count + slide.texts.filter(text => text.headerOffset === atom.headerOffset).length, 0) !== 1)
+			return reject('Text atom is shared by multiple active slide positions');
 		if (mirroredAtoms.has(atom.headerOffset))
 			return reject('Text has an OOXML mirror that could override the binary text');
 		if (edit.text.length !== atom.text.length) return reject('Replacement must keep the UTF-16 character count');

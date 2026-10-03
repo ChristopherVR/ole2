@@ -49,11 +49,14 @@ const installed = JSON.parse(
 );
 assert.equal(installed.name, '@christophervr/ole2');
 await writeFile(join(directory, 'fixture.xls'), await readFile(new URL('../test/fixtures/xls/workbook-features.xls', import.meta.url)));
+await writeFile(join(directory, 'fixture.doc'), await readFile(new URL('../test/fixtures/doc/main-field.doc', import.meta.url)));
+await writeFile(join(directory, 'fixture.ppt'), await readFile(new URL('../test/fixtures/ppt/native-text.ppt', import.meta.url)));
 await writeFile(
 	join(directory, 'verify.mjs'),
 	`
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { parseDoc, parseXls, parsePpt, parseCompoundFile, Ole2DocumentError } from '@christophervr/ole2';
 import { editXlsPreservedStringCell, readXlsWorkbook } from '@christophervr/ole2';
 import { editXlsPreservedStringCell as subpathStringEditor } from '@christophervr/ole2/legacy-excel-preserved-string-cell';
 import { buildOle2, parseOle2, readCompoundFileStream, replaceCompoundFileStream, resizeCompoundFileStream, readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, editXlsNumericCell, editXlsStringCell, readPptSlideTexts, editPptSlideText, tryWriteOleDocParagraphEdit } from '@christophervr/ole2';
@@ -88,6 +91,18 @@ const stringValue = 'Unicode ' + String.fromCodePoint(0x03a9, 0x65e5, 0x1f600);
 const stringEdit = editXlsPreservedStringCell(workbook, {row: 1, col: 0, value: stringValue});
 assert.equal(stringEdit.status, 'edited');
 assert.equal(readXlsWorkbook(stringEdit.bytes).sheets[0].cells.find(cell => cell.row === 1 && cell.col === 0).value, stringValue);
+const xlsModel = parseXls(workbook);
+xlsModel.sheets[0].cell(1,0).value = stringValue;
+assert.equal(parseXls(xlsModel.serialize()).sheets[0].cell(1,0).value, stringValue);
+assert.equal(xlsModel.dirty, true);
+assert.throws(() => parsePpt(workbook), Ole2DocumentError);
+const docModel = parseDoc(new Uint8Array(readFileSync(new URL('./fixture.doc', import.meta.url))));
+docModel.paragraphs[0].text = 'Model paragraph edit.';
+assert.equal(parseDoc(docModel.serialize()).paragraphs[0].text, 'Model paragraph edit.');
+const pptModel = parsePpt(new Uint8Array(readFileSync(new URL('./fixture.ppt', import.meta.url))));
+pptModel.slides[0].texts[0].text = 'Native title updated';
+assert.equal(parsePpt(pptModel.serialize()).slides[0].texts[0].text, 'Native title updated');
+assert.ok(parseCompoundFile(pptModel.serialize().buffer).getStream('PowerPoint Document'));
 const invalid = new Uint8Array([1, 2, 3]);
 assert.equal(editXlsNumericCell(invalid, { row: 0, col: 0, value: 1 }).bytes, invalid);
 const ppt = await buildPptFile({ widthEmu: 9144000, heightEmu: 5143500, slides: [{ shapes: [] }], pictures: [] });
@@ -101,6 +116,26 @@ run(process.execPath, [join(directory, 'verify.mjs')], directory);
 // Newly parsed metadata must remain additive for existing TypeScript callers.
 await writeFile(join(directory, 'verify-types.ts'), `
 import { readDocFib, readFcLcbAt, type DocFib, type DocCfbUnwrap } from '@christophervr/ole2';
+import { parseOle2, parseDoc, parseXls, parsePpt, type Ole2File, type PptDocument } from '@christophervr/ole2';
+const input = new Uint8Array();
+const model = parseOle2(input);
+const compatible: Ole2File = model;
+if (model.kind === 'doc') model.paragraphs[0]!.text = 'paragraph';
+if (model.kind === 'xls') model.sheets[0]!.cell(0,0).value = 'cell';
+if (model.kind === 'ppt') model.slides[0]!.texts[0]!.text = 'fixed';
+const checked: PptDocument = parseOle2<'ppt'>(input, {expect: 'ppt'});
+const inferred: PptDocument = parseOle2(input, {expect: 'ppt'});
+// @ts-expect-error A generic format requires a runtime expectation.
+parseOle2<'ppt'>(input);
+// @ts-expect-error The explicit generic and runtime expectation must agree.
+parseOle2<'ppt'>(input, {expect: 'xls'});
+// @ts-expect-error Document classes cannot be used as erased cast generics.
+parseOle2<PptDocument>(input, {expect: 'ppt'});
+// @ts-expect-error Paragraph insertion is not supported by this model.
+parseDoc(input).paragraphs.push({index: 0, text: 'new'});
+// @ts-expect-error Model kind is immutable.
+parseXls(input).kind = 'doc';
+void compatible; void checked; void inferred; void parsePpt;
 const fib: DocFib = {
   flags1Offset: 10, flags1: 0, tableStreamName: '1Table', cbMacOffset: 64,
   cbMac: 4096, ccpTextOffset: 76, ccpText: 0, plcfbteChpx: { fc: 0, lcb: 0 },

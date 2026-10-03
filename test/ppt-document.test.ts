@@ -97,6 +97,8 @@ describe('PptDocument active text model', () => {
 		const shared = replaceCompoundFileStream(input, ['PowerPoint Document'], stream), doc = new PptDocument(shared);
 		const a = doc.slides[0]!.texts[0]!, b = doc.slides[1]!.texts[0]!;
 		expect(a.headerOffset).toBe(b.headerOffset); expect(a.persistId).not.toBe(b.persistId);
+		const compatibility = editPptSlideText(shared, { slideIndex: 0, textIndex: 0, expectedText: a.text, text: 'Native title updated' });
+		expect(compatibility.status).toBe('unsupported'); expect(compatibility.bytes).toBe(shared);
 		a.text = a.text; expect(doc.dirty).toBe(false);
 		expect(() => { a.text = 'Native title updated'; }).toThrow(/shared by multiple active/);
 		expect(() => { b.text = 'Native title updated'; }).toThrow(/shared by multiple active/);

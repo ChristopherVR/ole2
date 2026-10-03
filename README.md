@@ -20,6 +20,7 @@ npm install @christophervr/ole2
 
 ## Features
 
+- Unified checked parsing into editable DOC/XLS/PPT classes and an explicit CFB container view; supported model setters preserve opaque bytes and serialize transactionally.
 - MS-CFB/OLE2 compound-file stream reading and writing, including mini streams, FAT/DIFAT and directory metadata.
 - Word 97-2003 binary `.doc` main-body text reading and guarded existing-paragraph edits, including fixed-length edits that retain original formatting runs and character-position tables.
 - Excel BIFF8 `.xls` workbook reading (`readXlsWorkbook`: every sheet, cell values, cached formula results and decoded formula text, styles, merges, column and row sizes, views, comments, hyperlinks, defined names), plus first-worksheet previews and bounded numeric/string cell edits.
@@ -30,6 +31,26 @@ npm install @christophervr/ole2
 - No browser or framework dependency; typed-array/ArrayBuffer inputs and ESM JavaScript with TypeScript declarations.
 
 ## Quick start
+
+The primary API returns a typed editable document. `kind` narrows the default
+union; a generic format key requires a runtime expectation:
+
+```ts
+import { parseOle2, parseDoc, parseXls, parsePpt } from '@christophervr/ole2';
+
+const document = parseOle2(bytes);
+if (document.kind === 'xls') document.sheets[0]!.cell(1, 0).value = 'Updated';
+const ppt = parseOle2<'ppt'>(pptBytes, { expect: 'ppt' });
+ppt.slides[0]!.texts[0]!.text = 'Native title updated';
+const saved = ppt.serialize();
+```
+
+`parseDoc`, `parseXls` and `parsePpt` return concrete document classes. Supported
+setters commit transactionally; unsupported edits throw without changing bytes
+or dirty state. Default parsing falls back to a CFB inspection view with explicit
+diagnostics when an Office model is unsupported or ambiguous. Existing stream
+inspection and operation APIs remain compatible. See [document models and the
+serialization contract](docs/document-model.md).
 
 For a container-level resize, call `resizeCompoundFileStream(bytes, ['ObjectPool', 'Workbook'], replacement)`. Success returns `{ ok: true, bytes }`; refusal returns `{ ok: false, bytes: originalInput, reason }`. Supported v3 containers use 512-byte sectors and at most 109 header-listed FAT sectors. Mini streams may grow, shrink, become empty or move to/from regular allocations. Existing mini IDs, root bytes and directory metadata survive root growth. V4 containers and DIFAT expansion remain explicitly unsupported. Allocations are appended, so a smaller payload does not compact the physical file; emptying a stream needs no new allocation. Format-specific callers must update internal Office record offsets and lengths themselves.
 
@@ -65,7 +86,7 @@ For an explicit numeric edit outcome, use `editXlsNumericCell(bytes, { worksheet
 
 `editXlsStringCell` provides an explicit outcome for the existing first-worksheet string editor. Continued SSTs, INDEX pointers, unknown cell-region records and complex resizing layouts are rejected. Supported string changes retain existing rich shared-string data and UTF-16 characters. This guarded path is not a general workbook writer.
 
-`editXlsPreservedStringCell(bytes, { worksheetIndex: 1, row: 0, col: 0, value: 'Updated text' })` edits existing LABELSST/RK cells without rebuilding the worksheet tables. It retains original rich/shared strings and continued SST bytes, supports new Unicode strings up to 32,767 UTF-16 units, and updates supported workbook pointers. Replacing a rich target with plain text removes that target's inline rich formatting while retaining its cell format and other aliases. Unsupported records and container layouts return the original bytes with a reason. See [the preservation API guide](docs/xls-preserved-string-edits.md).
+`editXlsPreservedStringCell` remains a compatibility editor for existing LABELSST/RK/NUMBER/MULRK cells. It retains original SST/CONTINUE data, neighboring cell records and selected XF, updating supported workbook pointers. New application code can assign `parseXls(bytes).sheets[0].cell(row, col).value` and call `serialize()`. Selected rich text becomes plain; other aliases retain their original data. See [the preservation API guide](docs/xls-preserved-string-edits.md).
 
 ```js
 import { readLegacyOfficeMetadata, writeLegacyOfficeMetadata } from "@christophervr/ole2";
@@ -79,7 +100,7 @@ if (edited === fileBytes) console.log("Unchanged or unsupported edit.");
 
 For Word, `tryWriteOleDocParagraphEdit(bytes, paragraphIndex, text)` returns either `status: 'edited'` with its strategy or `status: 'rejected'` with the original bytes and a reason. Equal-length plain-text edits retain original runs and character-position tables, including untouched headers and fields elsewhere. Growing edits require a simpler supported document and retain paragraph/first-run formatting. Supported v3 regular-stream containers retain nested storages, unknown streams and directory metadata; dependent character-position tables and unsupported allocation layouts are refused. This remains a paragraph editor rather than a complete Word document model or creator.
 
-DOC readers/editors accept an optional `OleDocProcessingLimits` argument. Defaults bound main text to 16,777,216 UTF-16 units and piece processing to 65,536 entries before decoding/allocation; callers may explicitly raise them. The explicit editor reports `resource-limit` or `invalid-limits`, and the compatibility reader returns `undefined` when processing cannot complete within its budget.
+DOC codec readers/editors accept optional `OleDocProcessingLimits`. Defaults bound main text to 16,777,216 UTF-16 units and piece/field processing to 65,536 entries before allocation. The document model uses these bounded defaults. Growing/shrinking plain paragraphs outside balanced main-story fields can preserve field codes, results and flags; edits inside fields and other unsupported CP-dependent structures remain refused.
 
 ## Legacy PowerPoint export
 
