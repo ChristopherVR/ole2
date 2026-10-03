@@ -26,6 +26,12 @@ function prepared(variant = 'valid') {
  return cfb.rewrap(word,table);
 }
 describe('existing exclusive DOC underline',()=>{
+ it('edits and restores the owned native single-underline fixture through the primary API',()=>{
+  const input=new Uint8Array(readFileSync(new URL('./fixtures/doc/underline-runs.doc',import.meta.url))), doc=new DocDocument(input), paragraph=doc.paragraphs[1]!;
+  expect(paragraph.runs[0]!.text).toBe('Bold text');expect(paragraph.runs[0]!.directUnderline).toBe('single');
+  for(const value of ['double','none','single'] as const){paragraph.runs[0]!.directUnderline=value;expect(new DocDocument(doc.serialize()).paragraphs[1]!.runs[0]!.directUnderline).toBe(value);expect(doc.serialize().filter((v,i)=>v!==input[i]).length).toBe(value==='single'?0:1);}
+  expect(doc.serialize()).toEqual(input);
+ });
  it('changes one byte, refreshes raw operand and restores every source byte',()=>{
   const input=prepared(), doc=new DocDocument(input), p=doc.paragraphs[1]!, run=p.runs[0]!;
   expect(run.directUnderline).toBe('single'); run.directUnderline='double';
