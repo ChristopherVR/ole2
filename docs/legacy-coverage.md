@@ -7,7 +7,7 @@ separate validation layers.
 
 | Layer/format | Read coverage | Write/edit coverage | Remaining parity gaps |
 | --- | --- | --- | --- |
-| MS-CFB v3/v4 | Bounded directory, FAT/DIFAT, mini/regular stream reads | Flat v3 creation; exact nested stream replacement; preserving v3 regular-stream growth/shrinkage | New nested storage creation, mini-stream resizing/transitions, v4 resizing and DIFAT expansion |
+| MS-CFB v3/v4 | Bounded directory, FAT/DIFAT, mini/regular stream reads | Flat v3 creation; exact nested stream replacement; preserving v3/v4 regular-stream growth/shrinkage with header-only DIFAT | New nested storage creation, mini-stream resizing/transitions, high 64-bit stream sizes and DIFAT expansion |
 | MS-OLEPS properties | Standard SummaryInformation properties | Existing supported text slots only | Creating/expanding properties, complete property-set models |
 | DOC 97–2003 | Piece-table main-body text and paragraph indexes | Guarded paragraph replacement; see API outcome reasons and fixture tests | Complete tables, runs, fields, headers/footnotes, drawings and arbitrary CP-dependent structural edits; fresh-document writer |
 | XLS BIFF8 | All worksheets, values/cached formulas/token text, styles, merges, views, comments, links and names | Exact NUMBER/RK/MULRK edits; preserving existing LABELSST/RK string edits in worksheet tab order, including SST continuations and supported offset relocation | Formula creation/recalculation, unsupported pointer-bearing records and cell conversions, charts/drawings, general workbook creation; BIFF5 and earlier |
@@ -19,6 +19,13 @@ PPT text edits preserve character offsets and reject text that has an OOXML
 `metroBlob` mirror. Unknown records and streams are retained by fixed-length
 replacement. Rebuilding a format stream or a flat container has narrower
 preservation guarantees and must refuse layouts it cannot safely update.
+
+V4 regular-stream resizing preserves nested hierarchy, raw directory metadata,
+4096-byte header padding and unrelated physical bytes; it validates the declared
+directory-sector count. Variable-length v4 mini edits and mini/regular transitions
+remain refused. See [the v4 preservation scope](cfb-v4-preservation.md) for tested
+and refused scenarios. Synthetic CFB checks establish container correctness,
+separately from native application comparisons.
 
 ## Independent evidence
 
@@ -58,7 +65,7 @@ No personal documents, embedded macros or objects are executed.
    complex fields/runs, Excel SST continuations, reordered sheet tabs and
    incremental PPT saves. Keep unsupported and malformed-input outcomes explicit.
 2. Extend preservation-based editors before general reconstruction: mini-stream
-   and v4 allocation changes, richer DOC CP table updates, and further XLS
+   allocation changes, richer DOC CP table updates, and further XLS
    cell conversions and verified pointer-bearing record handling.
 3. Build complete format models and format writers incrementally; share codecs
    with viewer consumers without duplicating renderer or OOXML implementations.
