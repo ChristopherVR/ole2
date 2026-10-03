@@ -59,6 +59,7 @@ await writeFile(join(directory, 'fixture.ppt'), await readFile(new URL('../test/
 await writeFile(join(directory, 'fixture.vsd'), await readFile(new URL('../test/fixtures/vsd/owned-v11.vsd', import.meta.url)));
 await writeFile(join(directory, 'fixture-native.vsd'), await readFile(new URL('../test/fixtures/vsd/native-visio16-v11.vsd', import.meta.url)));
 await writeFile(join(directory, 'fixture-literal.vsd'), await readFile(new URL('../test/fixtures/vsd/native-literal-transform.vsd', import.meta.url)));
+await writeFile(join(directory, 'fixture-hierarchy.vsd'), await readFile(new URL('../test/fixtures/vsd/native-hierarchy.vsd', import.meta.url)));
 await writeFile(
 	join(directory, 'verify.mjs'),
 	`
@@ -205,6 +206,16 @@ assert.deepEqual(nativeAfterStream.subarray(0, 54), nativeBeforeStream.subarray(
 assert.equal(nativeVsd.dirty, true);
 assert.equal(nativeVsd.revision, 1);
 const literalBytes = new Uint8Array(readFileSync(new URL('./fixture-literal.vsd', import.meta.url)));
+const hierarchyBytes = new Uint8Array(readFileSync(new URL('./fixture-hierarchy.vsd', import.meta.url)));
+const hierarchy = parseVsd(hierarchyBytes);
+assert.deepEqual(hierarchy.pages.map(page => page.id), [0, 4]);
+assert.deepEqual(hierarchy.pages[0].topLevelShapeIds, [2, 1, 5, 6]);
+assert.deepEqual(hierarchy.pages[1].topLevelShapeIds, [1, 2, 3]);
+assert.deepEqual(hierarchy.pages[0].shapes.map(shape => shape.id), [1, 2, 3, 4, 5, 6]);
+assert.deepEqual(hierarchy.pages[0].shapes.find(shape => shape.id === 5).childShapeIds, [3, 4]);
+assert.ok(Object.isFrozen(hierarchy.pages[0].topLevelShapeIds));
+assert.deepEqual(hierarchy.serialize(), hierarchyBytes);
+assert.equal(hierarchy.dirty, false);
 const literalVsd = parseVsd(literalBytes), literalShape = literalVsd.pages[0].shapes.find(s => s.id === 1);
 literalShape.text = 'Jello\\n\\n';
 const literalSaved = literalVsd.serialize();
@@ -240,6 +251,11 @@ if (model.kind === 'xls') model.sheets[0]!.cell(0,0).value = 'cell';
 if (model.kind === 'ppt') model.slides[0]!.texts[0]!.text = 'fixed';
 if (model.kind === 'vsd') model.pages[0]!.shapes[0]!.text = 'fixed';
 const checkedVsd: VsdDocument = parseOle2<'vsd'>(input, {expect: 'vsd'});
+const order: readonly number[] | undefined = checkedVsd.pages[0]!.topLevelShapeIds;
+const children: readonly number[] | undefined = checkedVsd.pages[0]!.shapes[0]!.childShapeIds;
+// @ts-expect-error Validated order metadata is readonly.
+checkedVsd.pages[0]!.topLevelShapeIds = [1];
+void order; void children;
 // @ts-expect-error Checked VSD parsing requires its runtime expectation.
 parseOle2<'vsd'>(input);
 // @ts-expect-error VSD expectations cannot be substituted for another generic.

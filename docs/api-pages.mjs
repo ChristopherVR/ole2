@@ -189,6 +189,15 @@ export const apiPages = [
         ]
       },
       {
+        "title": "Validated drawing order",
+        "body": "page.topLevelShapeIds and shape.childShapeIds resolve owner-scoped ShapeList mappings, with shapeOrderIssue when order is unresolved.",
+        "bullets": [
+          "Existing shapes arrays remain flat and in physical record order for lookup compatibility; use the new IDs for drawing order and retain group context.",
+          "Copied frozen metadata matches a native two-page group/master/style/layer fixture. Parent and local-coordinate reads are verified; inherited rendering is unresolved.",
+          "Malformed mappings, owners and ranges remain explicit. Aggregate order elements are bounded to 100,000; this adds no native transform writer admission."
+        ]
+      },
+      {
         "title": "Preserving edits",
         "body": "Supported setters replace edited leaves at their original offsets and stored allocation sizes, retaining pointer ancestors, unknown records and other CFB streams.",
         "bullets": [
