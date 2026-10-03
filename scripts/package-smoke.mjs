@@ -53,6 +53,8 @@ await writeFile(join(directory, 'fixture-blanks.xls'), await readFile(new URL('.
 await writeFile(join(directory, 'fixture.doc'), await readFile(new URL('../test/fixtures/doc/main-field.doc', import.meta.url)));
 await writeFile(join(directory, 'fixture-size.doc'), await readFile(new URL('../test/fixtures/doc/rich-size-runs.doc', import.meta.url)));
 await writeFile(join(directory, 'fixture-alignment.doc'), await readFile(new URL('../test/fixtures/doc/paragraph-alignment.doc', import.meta.url)));
+await writeFile(join(directory, 'fixture-underline.doc'), await readFile(new URL('../test/fixtures/doc/underline-runs.doc', import.meta.url)));
+await writeFile(join(directory, 'fixture-cell-types.xls'), await readFile(new URL('../test/fixtures/xls/workbook-cell-types.xls', import.meta.url)));
 await writeFile(join(directory, 'fixture.ppt'), await readFile(new URL('../test/fixtures/ppt/native-text.ppt', import.meta.url)));
 await writeFile(join(directory, 'fixture.vsd'), await readFile(new URL('../test/fixtures/vsd/owned-v11.vsd', import.meta.url)));
 await writeFile(join(directory, 'fixture-native.vsd'), await readFile(new URL('../test/fixtures/vsd/native-visio16-v11.vsd', import.meta.url)));
@@ -125,6 +127,26 @@ const alignedModel = parseDoc(new Uint8Array(readFileSync(new URL('./fixture-ali
 assert.equal(alignedModel.paragraphs[1].directAlignment, 'center');
 alignedModel.paragraphs[1].directAlignment = 'justify';
 assert.equal(parseDoc(alignedModel.serialize()).paragraphs[1].directAlignment, 'justify');
+const underlineModel = parseDoc(new Uint8Array(readFileSync(new URL('./fixture-underline.doc', import.meta.url))));
+const underlineSource = underlineModel.serialize();
+for (const value of ['double', 'none', 'single']) {
+  underlineModel.paragraphs[1].runs[0].directUnderline = value;
+  assert.equal(parseDoc(underlineModel.serialize()).paragraphs[1].runs[0].directUnderline, value);
+}
+assert.deepEqual(underlineModel.serialize(), underlineSource);
+for (const col of [1, 2, 3]) for (const value of [37.125, 'Converted Ω 日本']) {
+  const scalarModel = parseXls(new Uint8Array(readFileSync(new URL('./fixture-cell-types.xls', import.meta.url))));
+  const selected = scalarModel.sheets[0].cell(0, col), xf = selected.xf;
+  selected.value = value;
+  const reparsed = parseXls(scalarModel.serialize()).sheets[0].cell(0, col);
+  assert.equal(reparsed.value, value);
+  assert.equal(reparsed.type, typeof value);
+  assert.equal(reparsed.xf, xf);
+  const saved = scalarModel.serialize(), revision = scalarModel.revision;
+  assert.throws(() => { selected.value = null; });
+  assert.deepEqual(scalarModel.serialize(), saved);
+  assert.equal(scalarModel.revision, revision);
+}
 const pptModel = parsePpt(new Uint8Array(readFileSync(new URL('./fixture.ppt', import.meta.url))));
 pptModel.slides[0].texts[0].text = 'Native title updated';
 assert.equal(parsePpt(pptModel.serialize()).slides[0].texts[0].text, 'Native title updated');
@@ -227,6 +249,11 @@ void checkedVsd;
 const sizeHandle = parseDoc(input).paragraphs[0]?.runs?.[0];
 if (sizeHandle) sizeHandle.directFontSizePoints = 13.5;
 parseDoc(input).paragraphs[0]!.directAlignment = 'justify';
+parseDoc(input).paragraphs[0]!.runs[0]!.directUnderline = 'double';
+// @ts-expect-error Only the bounded stored underline values are writable.
+parseDoc(input).paragraphs[0]!.runs[0]!.directUnderline = 'wavy';
+parseXls(input).sheets[0]!.cell(0, 1).value = 37.125;
+parseXls(input).sheets[0]!.cell(0, 2).value = 'Converted Ω 日本';
 const originalParagraph: DocParagraph = { index: 0, text: 'Caller-created paragraph' };
 void originalParagraph;
 // @ts-expect-error Alignment names describe logical direction, not physical left/right.

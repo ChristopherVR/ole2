@@ -72,8 +72,8 @@ internal adapter hooks, not a supported external mutation API.
 
 | Model | Supported mutations | Explicit limitations |
 | --- | --- | --- |
-| DOC | Existing plain paragraph text; guarded growth/shrink outside balanced main-story fields; existing exclusive direct bold/italic, font-size and logical paragraph-alignment operands | No style resolution, new formatting records, paragraph insertion/removal, table/object model writes, field-code/result editing or unsupported CP-table shifts; processing budgets apply |
-| XLS | Existing numeric/string cells; physical BLANK/MULBLANK to number/plain string/boolean/error; NUMBER/RK/MULRK to boolean/error and existing BOOLERR replacement | Missing cells, merged followers, formulas, recalculation, unsupported type changes and unsafe relocation records/layouts refuse; selected rich string becomes plain while retaining XF and other aliases |
+| DOC | Existing plain paragraph text; guarded growth/shrink outside balanced main-story fields; existing exclusive direct bold/italic, font-size, none/single/double underline and logical paragraph-alignment operands | No style resolution, new formatting records, paragraph insertion/removal, table/object model writes, field-code/result editing or unsupported CP-table shifts; processing budgets apply |
+| XLS | Existing numeric/string cells; physical BLANK/MULBLANK to number/plain string/boolean/error; NUMBER/RK/MULRK to boolean/error and existing BOOLERR replacement and conversion to finite number/plain string | Missing cells, merged followers, formulas, recalculation, unsupported type changes and unsafe relocation records/layouts refuse; selected rich string becomes plain while retaining XF and other aliases |
 | PPT | Existing active fixed-length slide and notes-body text; supported small-anchor rectangle/text-box bounds | Inline shape text is linked by validated identity; outline refs may remain unresolved. Group/mirror/inherited/rotated/large-anchor edits refuse; no notes creation, field replacement or general rich-run reconstruction |
 | VSD v11 | Existing same-length UTF-16 shape text; exclusive top-level literal transforms within an unchanged stored block allocation | No older-version model, formula/style/master evaluation, fields or structural creation; block relocation, shared/overlapping blocks and dependent transform edits refuse |
 | CFB | Supported existing regular/mini stream resizing with path/hierarchy preservation | No new directory entries, external DIFAT expansion or variable-length v4 mini transitions; container support is separate from Office fidelity |
@@ -138,6 +138,17 @@ After a successful mutation, reacquire the run through the stable paragraph's
 `.runs` getter before another edit. No-op setters retain the handle and revision.
 
 ## Compatibility and migration
+
+`doc.paragraphs[index].runs[runIndex].directUnderline` edits an existing exclusive
+direct operand using `'none'`, `'single'` or `'double'`. Inherited, missing, opaque
+or aliased operands refuse. Reacquire the run after an edit; no formatting record
+is inserted. See [direct underline](doc-underline.md).
+
+Existing XLS boolean/error cells can become finite numbers or plain strings
+through `cell.value`. The selected XF and unrelated records, SST aliases and
+formula caches are retained. Missing cells, formula cells, clearing, malformed
+BOOLERR discriminators and unsafe relocation records refuse atomically. Formula
+caches are not recalculated; `recalculationRequired` remains explicit.
 
 The root `parseOle2` keeps the complete `Ole2File` inspection shape (`entries` and
 `getStream`) while returning the document union. `parseCompoundFile` names the

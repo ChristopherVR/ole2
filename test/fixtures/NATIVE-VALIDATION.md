@@ -280,3 +280,28 @@ validation. The actual run used 27 bounded fresh owned instances, macro-disabled
 OpenEx flags 458 and EventsEnabled=false; all process proofs confirmed cleanup.
 These are captured semantic gates on flat owned fixtures with zero masters and
 layers, not rendered or full-format fidelity.
+
+## DOC underline and XLS boolean/error scalar conversions
+
+The owned Word 97-2003 `doc/underline-runs.doc` fixture, SHA256
+`b788afb59be842da7baa0f65470ea298dd950851c7a0a411aa56c70046488154`,
+passed native Word 16 single-to-double-to-none-to-single changes on the selected
+nine characters, including native save/reopen. Only selected underline changed
+among the captured character fonts, paragraph formats, text, styles, stories and
+counts. Double and none replace one existing byte; single restores source bytes.
+`scripts/prepare-native-doc-underline-edits.mjs` reproduces these artifacts.
+
+The owned BIFF8 `xls/workbook-cell-types.xls` fixture, SHA256
+`6cf446bec16da6acca52b48c18521f53fef609e0a2483dd8437a7b9097a89387`,
+passed six native Excel 16 conversions of its three explicit boolean/error cells
+to `37.125` or the recorded plain string. The selected value/type changed; all
+other captured values, formulas, saved caches, fonts, styles, merges, counts,
+comments and dimensions remained exact. Native save/reopen passed. Explicit
+`xlNormalLoad=0` was used; the application did not expose RepairMode, so no
+RepairMode=false assertion is made. The library does not evaluate formulas.
+
+These bounded existing-record edits preserve unrelated records and refuse
+ambiguous ownership or unsafe relocation atomically. They establish the captured
+semantics of these owned fixtures, not pagination, rendering or full DOC/XLS
+parity. The VSD text matrix and refusal gates remain unchanged; this increment
+adds no native VSD transform support.

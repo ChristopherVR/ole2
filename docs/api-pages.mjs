@@ -40,7 +40,8 @@ export const apiPages = [
         "title": "Actual character runs",
         "body": "paragraph.runs maps CLX pieces and CHPX formatting pages to character positions. styleIndex reads the PAPX paragraph style identifier.",
         "bullets": [
-          "Direct bold/italic/font-size values are exposed separately from inherited or undecoded styling. Unknown SPRMs remain opaque.",
+          "Direct bold/italic/font-size/underline values are exposed separately from inherited or undecoded styling. Unknown SPRMs remain opaque.",
+          "directUnderline replaces an existing exclusive sprmCKul operand with none, single or double; other underline styles and inherited slots refuse. Native Word save/reopen checks retain all other captured formatting.",
           "Existing exclusive understood bold/italic operands can be set to absolute values. directFontSizePoints can replace an existing exclusive sprmCHps slot with 1..1638 points in exact half-point increments. Shared blobs, opaque semantics and missing slots refuse.",
           "Run handles expire after edits; reacquire paragraph.runs. Styles and piece PRMs are not resolved."
         ]
@@ -96,7 +97,7 @@ export const apiPages = [
           "Existing physical BLANK/MULBLANK cells can become number, plain string, boolean or error values; missing cells and merged followers still refuse.",
           "Packed siblings, selected XF and unrelated records are preserved; supported BOUNDSHEET/INDEX/DBCELL/ExtSST pointers are updated.",
           "Formula caches remain saved values; recalculationRequired signals that a consuming application must recalculate.",
-          "Existing NUMBER/RK/MULRK cells may become boolean/error BOOLERR records; existing BOOLERR values can be replaced. Cell type distinguishes formula, number, string, boolean, error and blank."
+          "Existing NUMBER/RK/MULRK cells may become boolean/error BOOLERR records; existing BOOLERR values can be replaced or converted to finite numbers/plain strings. Cell type distinguishes formula, number, string, boolean, error and blank."
         ]
       },
       {
@@ -107,7 +108,7 @@ export const apiPages = [
           "Unsafe pointer-bearing records and allocation layouts are refused atomically.",
           "A selected rich string becomes plain while other shared aliases retain their formatting.",
           "Charts/drawings and general workbook construction are not modeled by this adapter.",
-          "String-to-BOOLERR and BOOLERR-to-number/string conversions remain unsupported."
+          "String-to-BOOLERR conversions remain unsupported."
         ]
       },
       {
