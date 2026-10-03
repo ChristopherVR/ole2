@@ -5,7 +5,7 @@ import { resizeCompoundFileStream } from './ole2-stream-resize.js';
 import { editXlsStringWorkbookStream, type XlsPreservedStringResult } from './legacy-excel-preserved-string-edit.js';
 export type { XlsPreservedStringResult, XlsPreservedStringFailure } from './legacy-excel-preserved-string-edit.js';
 
-/** Replace an existing LABELSST/RK cell with plain Unicode text while retaining
+/** Replace an existing LABELSST/RK/NUMBER/MULRK cell with plain Unicode text while retaining
  * the complete serialized workbook and every unrelated CFB stream/allocation.
  * New SST entries support CONTINUE; worksheetIndex follows worksheet tab order.
  * Formula caches are preserved and callers must arrange recalculation.

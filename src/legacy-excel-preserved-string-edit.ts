@@ -5,6 +5,7 @@
  */
 import { type BiffRecord } from './legacy-excel-biff8.js';
 import { appendXlsSstString, readPreservedXlsSst } from './legacy-excel-preserved-sst.js';
+import { replaceXlsNumericRecord, relocateXlsDbCells, type XlsCellRecordReplacement } from './legacy-excel-cell-record-splices.js';
 import { KNOWN_XLS_RECORDS, XLS_FRT_WRAPPER } from './legacy-excel-known-records.js';
 
 export type XlsPreservedStringFailure = 'invalid-edit' | 'unsupported-workbook' | 'malformed-records' | 'sheet-not-found' | 'cell-not-supported' | 'ambiguous-cell' | 'unsupported-pointer-record' | 'container-not-writable';
@@ -87,8 +88,13 @@ function findTarget(bytes:Uint8Array,m:Model,edit:{row:number;col:number;workshe
  }
  if(targets.length>1) reject('ambiguous-cell');
  const target=targets[0];
- if(!target || ![0x00fd,0x027e].includes(target.opcode)) reject('cell-not-supported');
- if(target.length!==10) reject('malformed-records');
+ if(!target || ![0x00fd,0x027e,0x0203,0x00bd].includes(target.opcode)) reject('cell-not-supported');
+ if(target.opcode!==0x00bd && target.length!==(target.opcode===0x0203?14:10)) reject('malformed-records');
+ for(const record of m.records.filter(r=>r.headerOffset>=range.start&&r.headerOffset<range.end&&r.depth===1&&[0x0221,0x04bc,0x0236].includes(r.opcode))) {
+  if(record.length<6) reject('malformed-records');
+  const p=record.dataOffset;
+  if(edit.row>=view.getUint16(p,true)&&edit.row<=view.getUint16(p+2,true)&&edit.col>=view.getUint8(p+4)&&edit.col<=view.getUint8(p+5)) reject('cell-not-supported');
+ }
  return target;
 }
 
@@ -107,7 +113,7 @@ function extSst(entries:ReadonlyArray<{offset:number;recordOffset:number}>,map:(
  return out;
 }
 
-/** Edit an existing LABELSST/RK cell in a bare BIFF8 Workbook stream. Worksheet
+/** Edit an existing LABELSST/RK/NUMBER/MULRK cell in a bare BIFF8 Workbook stream. Worksheet
  * indices follow tab order, excluding charts/macros. Original rich strings are
  * retained; plain replacement strings are appended or reuse an existing plain
  * entry. No formulas are executed or cell-table records rebuilt.
@@ -122,7 +128,7 @@ export function editXlsStringWorkbookStream(input:Uint8Array,edit:{row:number;co
   const sourceView=new DataView(input.buffer,input.byteOffset,input.byteLength);
   if(sst.total>0x7fffffff || sst.entries.length>0x7fffffff || m.records.filter(r=>r.opcode===0x00fd).length!==sst.total) reject('malformed-records');
   if(m.records.some(r=>r.opcode===0x00fd && (r.length!==10 || sourceView.getUint32(r.dataOffset+6,true)>=sst.entries.length))) reject('malformed-records');
-  if(target.opcode===0x027e && sst.total===0x7fffffff) reject('malformed-records');
+  if(target.opcode!==0x00fd && sst.total===0x7fffffff) reject('malformed-records');
   let index=sst.entries.findIndex(e=>e.text===edit.value && e.richRuns===0 && e.extendedBytes===0);
   const splices:Splice[]=[];
   let ext:PhysicalRecord|undefined;
@@ -147,6 +153,12 @@ export function editXlsStringWorkbookStream(input:Uint8Array,edit:{row:number;co
     splices.push({start:ext.headerOffset,end:ext.dataOffset+ext.length,bytes:placeholder});
    }
   }
+  let cellReplacement:XlsCellRecordReplacement|undefined;
+  if(target.opcode===0x0203 || target.opcode===0x00bd) {
+   cellReplacement=replaceXlsNumericRecord(input,target,edit.col,index);
+   splices.push(cellReplacement);
+  }
+  if(splices.length && m.records.some(r=>!KNOWN_XLS_RECORDS.has(r.opcode)||r.opcode===XLS_FRT_WRAPPER)) reject('unsupported-pointer-record');
   splices.sort((a,b)=>a.start-b.start||a.end-b.end);
   const map=(offset:number):number=>{
    let moved=offset;
@@ -174,9 +186,12 @@ export function editXlsStringWorkbookStream(input:Uint8Array,edit:{row:number;co
   }
   out.set(input.subarray(from),to);
   const view=new DataView(out.buffer);
-  view.setUint16(map(target.headerOffset),0x00fd,true);
-  view.setUint32(map(target.dataOffset)+6,index,true);
-  view.setUint32(map(sst.start)+4,sst.total+(target.opcode===0x027e?1:0),true);
+  if(!cellReplacement) {
+   view.setUint16(map(target.headerOffset),0x00fd,true);
+   view.setUint32(map(target.dataOffset)+6,index,true);
+  }
+  if(cellReplacement) relocateXlsDbCells(input,out,m.records,cellReplacement,map);
+  view.setUint32(map(sst.start)+4,sst.total+(target.opcode!==0x00fd?1:0),true);
   view.setUint32(map(sst.start)+8,sst.entries.length+(index===sst.entries.length?1:0),true);
   if(splices.length) {
    const byOffset=new Map(m.records.map(r=>[r.headerOffset,r]));

@@ -82,7 +82,7 @@ describe('preserved SST string edits on real Excel fixtures',()=>{
  });
  it('refuses unsupported cell types, unknown relocation records and malformed SST counts',()=>{
   const input=raw(fixture());
-  expect(editXlsStringWorkbookStream(input,{row:1,col:1,value:'MULRK unsupported'})).toMatchObject({status:'unchanged',reason:'cell-not-supported',bytes:input});
+  expect(editXlsStringWorkbookStream(input,{row:1,col:3,value:'BOOLERR unsupported'})).toMatchObject({status:'unchanged',reason:'cell-not-supported',bytes:input});
   const unknown=input.slice(),r=readRecords(unknown,0,unknown.length).find(r=>r.opcode===0x0040)!;
   new DataView(unknown.buffer).setUint16(r.headerOffset,0x7777,true);
   expect(editXlsStringWorkbookStream(unknown,{row:1,col:0,value:'new'})).toMatchObject({status:'unchanged',reason:'unsupported-pointer-record',bytes:unknown});
