@@ -3,6 +3,11 @@ import { buildOle2 } from '../src/ole2-parser-write.js';
 import { parseOle2 } from '../src/ole2-parser-read.js';
 
 describe('OLE2 named stream primitives', () => {
+	it.each([4096, 0])('writes empty streams with ENDOFCHAIN at cutoff %i', (cutoff) => {
+		const parsed = parseOle2(buildOle2(new Map([['Empty', new Uint8Array(0)]]), undefined, cutoff));
+		expect(parsed.getStream('Empty')).toEqual(new Uint8Array(0));
+		expect(parsed.entries.find((entry) => entry.name === 'Empty')?.startSector).toBe(0xfffffffe);
+	});
 	it('round-trips regular and mini streams and the root CLSID', () => {
 		const streams = new Map([
 			['Small', new Uint8Array([1, 2, 3])],

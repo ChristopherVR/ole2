@@ -87,6 +87,29 @@ export function encodeName(name: string): Uint8Array {
 	return bytes;
 }
 
+/** Build a red-black directory tree over already sorted entries (root excluded).
+ * The incomplete lowest level is red, keeping every root-to-leaf black height
+ * equal. Directory IDs remain unchanged; stream allocations are unaffected. */
+export function buildDirectoryTree(entryCount: number): {
+	root: number;
+	links: Map<number, { left: number; right: number; color: number }>;
+} {
+	const links = new Map<number, { left: number; right: number; color: number }>();
+	let redLevel = 0;
+	for (let remaining = entryCount - 2; remaining >= 0; remaining = Math.floor(remaining / 2) - 1) redLevel++;
+	const build = (low: number, high: number, level: number): number => {
+		if (low > high) return 0xffffffff;
+		const id = Math.floor((low + high) / 2);
+		links.set(id, {
+			left: build(low, id - 1, level + 1),
+			right: build(id + 1, high, level + 1),
+			color: level === redLevel ? 0 : 1,
+		});
+		return id;
+	};
+	return { root: build(1, entryCount - 1, 0), links };
+}
+
 /**
  * Write a sector chain into a FAT (or mini-FAT) array.
  * Each sector in the chain points to the next; the last is marked ENDOFCHAIN.

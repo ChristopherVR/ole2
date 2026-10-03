@@ -80,6 +80,17 @@ export function buildOle2(
 ): ArrayBuffer {
 	const sectorSize = 512;
 	const miniSectorSize = 64;
+	if (rootClsid && rootClsid.length !== 16) throw new Error('Root CLSID must contain 16 bytes');
+	const names = [...streams.keys()].sort(compareDirEntryNames);
+	for (let i = 0; i < names.length; i++) {
+		const name = names[i]!;
+		if (!name.length || name.length > 31 || /[\x00\\/:!]/.test(name)) {
+			throw new Error('CFB stream names must be 1-31 UTF-16 code units without NUL, \\, /, :, or !');
+		}
+		if (i > 0 && compareDirEntryNames(names[i - 1]!, name) === 0) {
+			throw new Error('Duplicate CFB stream names');
+		}
+	}
 
 	// Separate mini-streams from regular streams
 	const regularStreams: Array<{ name: string; data: Uint8Array }> = [];
@@ -103,7 +114,7 @@ export function buildOle2(
 		for (let i = 0; i < numSectors; i++) {
 			sectors.push(nextSector++);
 		}
-		fatChains.set(stream.name, { start: sectors[0] ?? 0, sectors });
+		fatChains.set(stream.name, { start: sectors[0] ?? ENDOFCHAIN, sectors });
 	}
 
 	// Build mini stream container (concatenated mini streams)
@@ -130,7 +141,7 @@ export function buildOle2(
 				miniOffset += miniSectorSize;
 			}
 			miniFatChains.set(stream.name, {
-				start: miniSectors[0] ?? 0,
+				start: miniSectors[0] ?? ENDOFCHAIN,
 				sectors: miniSectors,
 			});
 		}
@@ -181,8 +192,8 @@ export function buildOle2(
 	// Sort the non-root entries into [MS-CFB] directory order. Each DirEntry is
 	// self-contained (it already carries its own start sector + size), so the
 	// stream/mini-FAT allocations above are unaffected by the reorder. Sorting
-	// here lets serializeDirectoryEntries emit an ascending right-sibling chain,
-	// which is a valid binary search tree that conformant readers (PowerPoint)
+	// here lets serializeDirectoryEntries emit a balanced red-black tree
+	// that conformant readers (PowerPoint)
 	// can traverse to find every stream by name.
 	const [rootEntry, ...streamEntries] = dirEntries;
 	streamEntries.sort((a, b) => compareDirEntryNames(a.name, b.name));
@@ -196,7 +207,7 @@ export function buildOle2(
 	// Allocate mini FAT sectors
 	let firstMiniFATSector = ENDOFCHAIN;
 	let numMiniFATSectors = 0;
-	if (miniStreams.length > 0) {
+	if (nextMiniSector > 0) {
 		numMiniFATSectors = Math.ceil((nextMiniSector * 4) / sectorSize);
 		firstMiniFATSector = nextSector;
 		nextSector += numMiniFATSectors;

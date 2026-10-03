@@ -46,10 +46,14 @@ describe('legacy Excel CFB rewrap safety', () => {
 			buildOle2(
 				new Map([
 					['Workbook', new Uint8Array([1, 2, 3])],
-					['workbook', new Uint8Array([4, 5, 6])],
+					['workboox', new Uint8Array([4, 5, 6])],
 				]),
 			),
 		);
+		// Create the malformed collision independently of the validating writer.
+		const view = new DataView(flat.buffer);
+		const directory = (view.getUint32(0x30, true) + 1) * 512;
+		view.setUint16(directory + 256 + 14, 'k'.charCodeAt(0), true);
 		const unwrap = unwrapXlsBytes(flat);
 		expect(unwrap.workbookBytes).toEqual(flat);
 		expect(unwrap.rewrap).toBeUndefined();

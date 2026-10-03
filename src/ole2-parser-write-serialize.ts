@@ -8,7 +8,7 @@
  */
 
 import { ENDOFCHAIN, FREESECT, OLE_MAGIC, DIR_ENTRY_SIZE } from './ole2-parser-types.js';
-import { encodeName } from './ole2-parser-write-helpers.js';
+import { buildDirectoryTree, encodeName } from './ole2-parser-write-helpers.js';
 import type { DirEntry, SectorChain } from './ole2-parser-write-helpers.js';
 
 /**
@@ -162,6 +162,7 @@ export function serializeDirectoryEntries(
 ): Uint8Array {
 	const dirData = new Uint8Array(numDirSectors * sectorSize);
 	const dirView = new DataView(dirData.buffer);
+	const tree = buildDirectoryTree(dirEntries.length);
 
 	for (let i = 0; i < dirEntries.length; i++) {
 		const entry = dirEntries[i]!;
@@ -178,7 +179,7 @@ export function serializeDirectoryEntries(
 		dirData[entryOffset + 66] = entry.type;
 
 		// Color (1 = black for red-black tree)
-		dirData[entryOffset + 67] = 1;
+		dirData[entryOffset + 67] = i === 0 ? 1 : tree.links.get(i)!.color;
 
 		// Storage CLSID (16 bytes); zero-filled unless the entry carries one.
 		if (entry.clsid) {
@@ -186,15 +187,15 @@ export function serializeDirectoryEntries(
 		}
 
 		// Left sibling, right sibling, child
-		// Use a simple binary tree layout: root child = 1, entries linked as right siblings
+		// Balanced red-black sibling tree; directory slot IDs stay unchanged.
 		if (i === 0) {
 			// Root entry
 			dirView.setUint32(entryOffset + 68, 0xffffffff, true); // no left sibling
 			dirView.setUint32(entryOffset + 72, 0xffffffff, true); // no right sibling
-			dirView.setUint32(entryOffset + 76, dirEntries.length > 1 ? 1 : 0xffffffff, true); // child
+			dirView.setUint32(entryOffset + 76, tree.root, true); // child
 		} else {
-			dirView.setUint32(entryOffset + 68, 0xffffffff, true); // no left sibling
-			dirView.setUint32(entryOffset + 72, i + 1 < dirEntries.length ? i + 1 : 0xffffffff, true); // right sibling
+			dirView.setUint32(entryOffset + 68, tree.links.get(i)!.left, true);
+			dirView.setUint32(entryOffset + 72, tree.links.get(i)!.right, true);
 			dirView.setUint32(entryOffset + 76, 0xffffffff, true); // no child
 		}
 

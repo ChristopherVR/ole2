@@ -29,6 +29,7 @@ const DIR_ENTRY_SIZE = 128;
 interface RawDirEntry {
 	name: string;
 	type: number;
+	color: number;
 	leftSiblingId: number;
 	rightSiblingId: number;
 	childId: number;
@@ -90,6 +91,7 @@ function readRawDirectory(buffer: ArrayBuffer): RawDirEntry[] {
 		entries.push({
 			name,
 			type,
+			color: dir[off + 67]!,
 			leftSiblingId: dirView.getUint32(off + 68, true),
 			rightSiblingId: dirView.getUint32(off + 72, true),
 			childId: dirView.getUint32(off + 76, true),
@@ -171,6 +173,41 @@ function inOrderNames(buffer: ArrayBuffer): string[] {
 }
 
 describe('buildOle2 directory ordering (CFB / PowerPoint compatibility)', () => {
+	it.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 15, 16, 31, 32, 100])('satisfies red-black invariants for %i streams', (count) => {
+		const streams = new Map(Array.from({ length: count }, (_, i) => [`Stream${i}`, new Uint8Array([i])]) as [string, Uint8Array][]);
+		const buffer = buildOle2(streams);
+		const entries = readRawDirectory(buffer), rootId = entries[0]!.childId;
+		if (count) expect(entries[rootId]!.color).toBe(1);
+		const seen = new Set<number>();
+		const blackHeight = (id: number, parentRed: boolean): number => {
+			if (id === NOSTREAM) return 1;
+			expect(seen.has(id)).toBe(false);
+			seen.add(id);
+			const entry = entries[id]!;
+			if (parentRed) expect(entry.color).toBe(1);
+			const left = blackHeight(entry.leftSiblingId, entry.color === 0);
+			const right = blackHeight(entry.rightSiblingId, entry.color === 0);
+			expect(left).toBe(right);
+			return left + entry.color;
+		};
+		blackHeight(rootId, false);
+		expect(seen.size).toBe(count);
+		for (const name of streams.keys()) expect(findStreamViaTree(buffer, name)).toBe(true);
+	});
+
+	it.each(['', 'a'.repeat(32), 'has\0nul', 'a/b', 'a\\b', 'a:b', 'a!b'])('rejects invalid stream name %j before serializing', (name) => {
+		expect(() => buildOle2(new Map([[name, new Uint8Array([1])]]))).toThrow('CFB stream names');
+	});
+
+	it('rejects case-insensitive duplicate names rather than creating ambiguous streams', () => {
+		expect(() => buildOle2(new Map([['Book', new Uint8Array([1])], ['BOOK', new Uint8Array([2])]])))
+			.toThrow('Duplicate CFB stream names');
+	});
+
+	it('preserves a maximum-length stream name', () => {
+		const name = 'a'.repeat(31);
+		expect(parseOle2(buildOle2(new Map([[name, new Uint8Array([1])]]))).getStream(name)).toEqual(new Uint8Array([1]));
+	});
 	it('emits streams that a PowerPoint-style binary tree search can find', () => {
 		// Reproduces the encryption layout exactly: a small EncryptionInfo
 		// stream (mini-stream) inserted *before* a large EncryptedPackage

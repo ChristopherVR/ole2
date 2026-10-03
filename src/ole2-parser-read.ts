@@ -33,6 +33,9 @@ import {
 export function parseOle2(buffer: ArrayBuffer): Ole2File {
 	const data = new Uint8Array(buffer);
 	const view = new DataView(buffer);
+	if (data.length < 512) {
+		throw new Ole2ParseError('Truncated OLE2 compound file header');
+	}
 
 	// Validate magic signature
 	for (let i = 0; i < OLE_MAGIC.length; i++) {
@@ -52,8 +55,19 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 
 	const sectorSizePower = view.getUint16(0x1e, true);
 	const miniSectorSizePower = view.getUint16(0x20, true);
+	if (
+		(majorVersion !== 3 && majorVersion !== 4) ||
+		sectorSizePower !== (majorVersion === 3 ? 9 : 12) ||
+		miniSectorSizePower !== 6
+	) {
+		throw new Ole2ParseError('Unsupported OLE2 version or sector size');
+	}
 	const sectorSize = 1 << sectorSizePower;
 	const miniSectorSize = 1 << miniSectorSizePower;
+	if (data.length < sectorSize || data.length % sectorSize !== 0) {
+		throw new Ole2ParseError('Truncated OLE2 sector');
+	}
+	const sectorCount = data.length / sectorSize - 1;
 
 	const totalFATSectors = view.getUint32(0x2c, true);
 	const firstDirectorySector = view.getUint32(0x30, true);
@@ -62,6 +76,9 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 	const totalMiniFATSectors = view.getUint32(0x40, true);
 	const firstDIFATSector = view.getUint32(0x44, true);
 	const totalDIFATSectors = view.getUint32(0x48, true);
+	if (totalFATSectors > sectorCount || totalMiniFATSectors > sectorCount || totalDIFATSectors > sectorCount) {
+		throw new Ole2ParseError('Allocation table count exceeds file size');
+	}
 
 	// Helper: convert sector index to file offset
 	function sectorOffset(sector: number): number {
@@ -91,7 +108,10 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 
 	// Read additional DIFAT sectors if needed
 	let difatSector = firstDIFATSector;
+	const difatSeen = new Set<number>();
 	for (let d = 0; d < totalDIFATSectors && difatSector <= MAXREGSECT; d++) {
+		if (difatSeen.has(difatSector)) throw new Ole2ParseError('Circular DIFAT chain');
+		difatSeen.add(difatSector);
 		const difatData = readSector(difatSector);
 		const difatView = new DataView(difatData.buffer, difatData.byteOffset, difatData.byteLength);
 		const entriesPerSector = (sectorSize - 4) / 4;
@@ -103,6 +123,10 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 		}
 		// Last 4 bytes of DIFAT sector point to next DIFAT sector
 		difatSector = difatView.getUint32(sectorSize - 4, true);
+	}
+	if (difatSeen.size !== totalDIFATSectors || fatSectors.length !== totalFATSectors ||
+		new Set(fatSectors).size !== fatSectors.length || fatSectors.some((id) => difatSeen.has(id))) {
+		throw new Ole2ParseError('Invalid DIFAT allocation table');
 	}
 
 	// Build the full FAT array
@@ -129,8 +153,10 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 			}
 			visited.add(current);
 			sectors.push(readSector(current));
-			current = fatEntries[current] ?? ENDOFCHAIN;
+			if (fatEntries[current] === undefined) throw new Ole2ParseError('Missing FAT chain entry');
+			current = fatEntries[current]!;
 		}
+		if (current !== ENDOFCHAIN) throw new Ole2ParseError('Invalid FAT chain terminator');
 
 		// Concatenate all sectors
 		const totalLength = sectors.length * sectorSize;
@@ -147,14 +173,20 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 	 * Read a stream, trimming to actual size.
 	 */
 	function readStream(startSector: number, size: number): Uint8Array {
+		if (size === 0) return new Uint8Array(0);
+		if (size > sectorCount * sectorSize) throw new Ole2ParseError('Stream size exceeds file size');
 		const raw = readSectorChain(startSector);
-		return raw.subarray(0, Math.min(size, raw.length));
+		if (raw.length < size) throw new Ole2ParseError('Truncated stream sector chain');
+		return raw.subarray(0, size);
 	}
 
 	// Build the mini FAT
 	const miniFatEntries: number[] = [];
 	if (firstMiniFATSector <= MAXREGSECT && totalMiniFATSectors > 0) {
 		const miniFatRaw = readSectorChain(firstMiniFATSector);
+		if (miniFatRaw.length !== totalMiniFATSectors * sectorSize) {
+			throw new Ole2ParseError('Unexpected mini FAT chain length');
+		}
 		const miniFatView = new DataView(
 			miniFatRaw.buffer,
 			miniFatRaw.byteOffset,
@@ -180,6 +212,9 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 		if (objectType === ENTRY_TYPE_EMPTY) {
 			continue;
 		}
+		if (nameLen < 2 || nameLen > 64 || nameLen % 2 !== 0 || entryView.getUint16(nameLen - 2, true) !== 0) {
+			throw new Ole2ParseError('Invalid directory entry name');
+		}
 
 		// Name is a UTF-16LE string, nameLen includes the null terminator (in bytes)
 		const nameBytes = Math.max(0, nameLen - 2);
@@ -200,9 +235,11 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 		// For v4 files, size can be 64-bit
 		let size = sizeLow;
 		if (majorVersion === 4) {
-			const _sizeHigh = entryView.getUint32(124, true);
-			// Use only low 32 bits for now (4GB should be enough for any PPTX)
-			size = sizeLow;
+			const sizeHigh = entryView.getUint32(124, true);
+			size = sizeLow + sizeHigh * 0x100000000;
+			if (!Number.isSafeInteger(size) || size > sectorCount * sectorSize) {
+				throw new Ole2ParseError('Stream size exceeds supported file bounds');
+			}
 		}
 
 		entries.push({
@@ -219,16 +256,20 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 
 	// The root entry's stream is the mini-stream container
 	const rootEntry = entries.find((e) => e.type === ENTRY_TYPE_ROOT);
+	if (!rootEntry || entries.filter((e) => e.type === ENTRY_TYPE_ROOT).length !== 1) {
+		throw new Ole2ParseError('Invalid root directory entry');
+	}
 
 	let miniStreamData: Uint8Array | undefined;
 	if (rootEntry && rootEntry.startSector <= MAXREGSECT) {
-		miniStreamData = readSectorChain(rootEntry.startSector);
+		miniStreamData = readStream(rootEntry.startSector, rootEntry.size);
 	}
 
 	/**
 	 * Read a mini-stream, following the mini FAT chain.
 	 */
 	function readMiniStream(startSector: number, size: number): Uint8Array {
+		if (size === 0) return new Uint8Array(0);
 		if (!miniStreamData) {
 			throw new Ole2ParseError('Mini stream container not found');
 		}
@@ -243,18 +284,23 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 			}
 			visited.add(current);
 			const offset = current * miniSectorSize;
+			if (offset + miniSectorSize > miniStreamData.length || miniFatEntries[current] === undefined) {
+				throw new Ole2ParseError('Mini stream sector exceeds allocation bounds');
+			}
 			sectors.push(miniStreamData.subarray(offset, offset + miniSectorSize));
-			current = miniFatEntries[current] ?? ENDOFCHAIN;
+			current = miniFatEntries[current]!;
 		}
+		if (current !== ENDOFCHAIN) throw new Ole2ParseError('Invalid mini FAT chain terminator');
 
 		const totalLength = sectors.length * miniSectorSize;
+		if (totalLength < size) throw new Ole2ParseError('Truncated mini stream sector chain');
 		const result = new Uint8Array(totalLength);
 		let offset = 0;
 		for (const sector of sectors) {
 			result.set(sector, offset);
 			offset += miniSectorSize;
 		}
-		return result.subarray(0, Math.min(size, result.length));
+		return result.subarray(0, size);
 	}
 
 	/**
