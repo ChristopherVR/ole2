@@ -7,7 +7,7 @@ import { unwrapXlsBytes } from './legacy-excel-cfb.js';
 
 export type XlsNumericEditResult =
 	| { status: 'edited'; bytes: Uint8Array; recalculationRequired: true }
-	| { status: 'unchanged'; bytes: Uint8Array; reason: 'invalid-edit' | 'unsupported-workbook' | 'sheet-not-found' | 'cell-not-supported' | 'inexact-rk' | 'malformed-records' | 'container-not-writable' };
+	| { status: 'unchanged'; bytes: Uint8Array; reason: 'invalid-edit' | 'unsupported-workbook' | 'sheet-not-found' | 'cell-not-supported' | 'inexact-rk' | 'malformed-records' | 'container-not-writable' | 'ambiguous-cell' };
 
 /** Encode without rounding. RK can store signed 30-bit integers, scaled integers,
  * or the top 30 bits of an IEEE double (optionally divided by 100).
@@ -51,11 +51,35 @@ function worksheetRanges(bytes: Uint8Array): Array<{ start: number; end: number 
 			}
 		}
 	}
-	return depth === 0 ? ranges : undefined;
+	if (depth !== 0) return undefined;
+	// BoundSheet8 order is tab order; its lbPlyPos addresses the physical BOF.
+	// MS-XLS 2.4.28: https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-xls/b9ec509a-235d-424e-871d-f8e721106501
+	const globalsEnd = records.find((r) => r.opcode === 0x000a)?.headerOffset ?? 0;
+	const bounds = records.filter((r) => r.opcode === 0x0085 && r.headerOffset < globalsEnd);
+	// Retain compatibility with minimal bare BIFF streams having no tab directory.
+	if (bounds.length === 0) return ranges;
+	const ordered: Array<{ start: number; end: number }> = [];
+	const used = new Set<number>();
+	for (const bound of bounds) {
+		if (bound.length < 8) return undefined;
+		const p = bound.dataOffset;
+		const nameLength = view.getUint8(p + 6);
+		const width = (view.getUint8(p + 7) & 1) ? 2 : 1;
+		if (nameLength < 1 || nameLength > 31 || bound.length !== 8 + nameLength * width) return undefined;
+		const kind = view.getUint8(p + 5);
+		if (![0, 1, 2, 6].includes(kind)) return undefined;
+		if (kind !== 0) continue;
+		const offset = view.getUint32(p, true);
+		const range = ranges.find((r) => r.start === offset);
+		if (!range || used.has(offset)) return undefined;
+		used.add(offset);
+		ordered.push(range);
+	}
+	return ordered.length === ranges.length ? ordered : undefined;
 }
 
 /** Edit an existing NUMBER/RK/MULRK cell in a selected worksheet (zero-based
- * worksheet index). Unsupported edits return an explicit reason and original
+ * worksheet index in BOUNDSHEET tab order, excluding macro/chart sheets). Unsupported edits return an explicit reason and original
  * bytes. No resize, formula execution, or cached formula recalculation occurs.
  */
 export function editXlsNumericCell(
@@ -76,6 +100,7 @@ export function editXlsNumericCell(
 		let payload: number | undefined;
 		let packed = false;
 		let depth = 0;
+		let matches = 0;
 		for (const record of readRecords(bytes, range.start, range.end)) {
 			if (record.opcode === 0x0809) { depth++; continue; }
 			if (record.opcode === 0x000a) { depth--; continue; }
@@ -87,17 +112,26 @@ export function editXlsNumericCell(
 				const lastCol = view.getUint16(p + record.length - 2, true);
 				if (lastCol > 255 || lastCol < first || lastCol - first + 1 !== (record.length - 6) / 6) return unchanged('malformed-records');
 				if (view.getUint16(p, true) === edit.row && edit.col >= first && edit.col <= lastCol) {
+					if (++matches > 1) return unchanged('ambiguous-cell');
 					payload = p + 6 + (edit.col - first) * 6;
 					packed = true;
-					break;
 				}
 			} else if (record.opcode === 0x0203 || record.opcode === 0x027e) {
 				if (record.length !== (record.opcode === 0x0203 ? 14 : 10)) return unchanged('malformed-records');
 				if (view.getUint16(p, true) === edit.row && view.getUint16(p + 2, true) === edit.col) {
+					if (++matches > 1) return unchanged('ambiguous-cell');
 					payload = p + 6;
 					packed = record.opcode === 0x027e;
-					break;
 				}
+			} else if ([0x0006, 0x0201, 0x0204, 0x0205, 0x00fd, 0x00d6].includes(record.opcode)) {
+				if (record.length < 6) return unchanged('malformed-records');
+				if (view.getUint16(p, true) === edit.row && view.getUint16(p + 2, true) === edit.col && ++matches > 1) return unchanged('ambiguous-cell');
+			} else if (record.opcode === 0x00be) {
+				if (record.length < 8 || (record.length - 6) % 2 !== 0) return unchanged('malformed-records');
+				const first = view.getUint16(p + 2, true);
+				const lastCol = view.getUint16(p + record.length - 2, true);
+				if (lastCol > 255 || lastCol < first || lastCol - first + 1 !== (record.length - 6) / 2) return unchanged('malformed-records');
+				if (view.getUint16(p, true) === edit.row && edit.col >= first && edit.col <= lastCol && ++matches > 1) return unchanged('ambiguous-cell');
 			}
 		}
 		if (payload === undefined) return unchanged('cell-not-supported');

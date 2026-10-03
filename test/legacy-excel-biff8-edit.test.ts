@@ -70,3 +70,49 @@ describe('RK exact encoding', () => {
   expect(encodeRkExact(Infinity)).toBeUndefined();
  });
 });
+
+function rec(opcode: number, data: number[]): number[] {
+ return [opcode & 255, opcode >> 8, data.length & 255, data.length >> 8, ...data];
+}
+function u32(n: number): number[] { return [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, n >>> 24]; }
+function testBook(duplicate?: number): Uint8Array {
+ const bof = (kind: number) => rec(0x809,[0,6,kind,0,...new Array(12).fill(0)]);
+ const eof = rec(0xa,[]);
+ const rk = (n: number) => rec(0x27e,[0,0,0,0,15,0,...u32((n << 2)|2)]);
+ const bound = (offset: number, kind: number, name: string) => rec(0x85,[...u32(offset),0,kind,1,0,name.charCodeAt(0)]);
+ const chart = [...bof(0x20),...eof];
+ const extras = duplicate === undefined ? [] : duplicate === 0x27e ? rk(30) : rec(duplicate,[0,0,0,0,15,0,...new Array(14).fill(0)]);
+ const a = [...bof(0x10),...rk(10),...extras,...eof];
+ const b = [...bof(0x10),...rk(20),...eof];
+ const prefix = [...bof(5),...bound(0,2,'C'),...bound(0,0,'B'),...bound(0,0,'A'),...eof];
+ return new Uint8Array([...bof(5),...bound(prefix.length,2,'C'),...bound(prefix.length+chart.length+a.length,0,'B'),...bound(prefix.length+chart.length,0,'A'),...eof,...chart,...a,...b]);
+}
+
+describe('BIFF8 worksheet tab selection and ambiguous cells', () => {
+ it('selects tab order through BOUNDSHEET offsets, excluding chart sheets', () => {
+  const input = testBook();
+  const result = editXlsNumericCell(input,{worksheetIndex:0,row:0,col:0,value:43});
+  expect(result.status).toBe('edited');
+  const before = readXlsWorkbook(input);
+  const after = readXlsWorkbook(result.bytes);
+  expect(before.sheets.map(s=>s.name)).toEqual(['C','B','A']);
+  expect(after.sheets[1]?.cells[0]?.value).toBe(43);
+  expect(after.sheets[2]?.cells[0]?.value).toBe(10);
+  const next = editXlsNumericCell(result.bytes,{worksheetIndex:1,row:0,col:0,value:44});
+  expect(next.status).toBe('edited');
+  expect(readXlsWorkbook(next.bytes).sheets[2]?.cells[0]?.value).toBe(44);
+  expect(editXlsNumericCell(input,{worksheetIndex:2,row:0,col:0,value:1})).toMatchObject({status:'unchanged',reason:'sheet-not-found'});
+ });
+ it.each(['middle-of-record','out-of-bounds','chart-pointer','duplicate-sheet'])('rejects invalid BOUNDSHEET mapping: %s', kind => {
+  const input = testBook();
+  const bounds = readRecords(input,0,input.length).filter(r=>r.opcode===0x85);
+  const v = new DataView(input.buffer);
+  const offset = kind==='middle-of-record' ? v.getUint32(bounds[1]!.dataOffset,true)+1 : kind==='out-of-bounds' ? input.length+4 : kind==='chart-pointer' ? v.getUint32(bounds[0]!.dataOffset,true) : v.getUint32(bounds[2]!.dataOffset,true);
+  v.setUint32(bounds[1]!.dataOffset,offset,true);
+  expect(editXlsNumericCell(input,{worksheetIndex:0,row:0,col:0,value:43})).toMatchObject({status:'unchanged',reason:'malformed-records',bytes:input});
+ });
+ it.each([0x27e,0x0006,0x00fd])('rejects duplicate target cell record %i', opcode => {
+  const input = testBook(opcode);
+  expect(editXlsNumericCell(input,{worksheetIndex:1,row:0,col:0,value:43})).toMatchObject({status:'unchanged',reason:'ambiguous-cell',bytes:input});
+ });
+});
