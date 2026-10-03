@@ -74,13 +74,14 @@ export function findTarget(bytes:Uint8Array,m:Model,edit:{row:number;col:number;
    if(r.length<6+stride || (r.length-6)%stride!==0) reject('malformed-records');
    const first=view.getUint16(p+2,true),last=view.getUint16(p+r.length-2,true);
    if(last>255 || last<first || last-first+1!==(r.length-6)/stride) reject('malformed-records');
+   if(r.opcode===0x00be && (first>254 || last<=first)) reject('malformed-records');
    if(view.getUint16(p,true)===edit.row && edit.col>=first && edit.col<=last) targets.push(r);
   }
  }
  if(targets.length>1) reject('ambiguous-cell');
  const target=targets[0];
  if(!target || !allowed.includes(target.opcode)) reject('cell-not-supported');
- if(target.opcode!==0x00bd && target.length!==(target.opcode===0x0203?14:target.opcode===0x0205?8:10)) reject('malformed-records');
+ if(target.opcode!==0x00bd && target.opcode!==0x00be && target.length!==(target.opcode===0x0203?14:target.opcode===0x0205?8:target.opcode===0x0201?6:10)) reject('malformed-records');
  for(const record of m.records.filter(r=>r.headerOffset>=range.start&&r.headerOffset<range.end&&r.depth===1&&[0x0221,0x04bc,0x0236].includes(r.opcode))) {
   if(record.length<6) reject('malformed-records');
   const p=record.dataOffset;

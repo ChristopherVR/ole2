@@ -5,6 +5,7 @@ import { readXlsWorkbook, type XlsWorkbook, type XlsSheet, type XlsCell, type Xl
 import { editXlsNumericCell } from './legacy-excel-biff8-edit.js';
 import { editXlsPreservedStringCell } from './legacy-excel-preserved-string-cell.js';
 import { editXlsBoolErrorCell, isXlsErrorValue, normalizeXlsErrorValue } from './legacy-excel-bool-error-edit.js';
+import { editXlsBlankCell } from './legacy-excel-blank-edit.js';
 
 export type XlsCellType = 'number' | 'string' | 'boolean' | 'error' | 'blank' | 'formula';
 function cellType(cell: XlsCell): XlsCellType {
@@ -66,8 +67,8 @@ export class XlsSheetNode {
 
 const XLS_CAPABILITIES = Object.freeze({
   read: Object.freeze(['BIFF8 worksheets', 'cell values and cached formulas', 'styles and merges', 'opaque compound streams']),
-  write: Object.freeze(['existing NUMBER/RK/MULRK numeric values', 'existing LABELSST/NUMBER/RK/MULRK plain string values', 'existing NUMBER/RK/MULRK/BOOLERR boolean and error values']),
-  limitations: Object.freeze(['No cell creation, formula editing or recalculation', 'Numeric writes require exact original encoding', 'Resizing writes reject unsupported relocation records and container layouts', 'Plain string replacement removes selected rich text runs', 'String-to-boolean/error and boolean/error-to-number/string conversions unsupported']),
+  write: Object.freeze(['existing NUMBER/RK/MULRK numeric values', 'existing LABELSST/NUMBER/RK/MULRK plain string values', 'existing NUMBER/RK/MULRK/BOOLERR boolean and error values', 'existing BLANK/MULBLANK cells to number, plain string, boolean or error values']),
+  limitations: Object.freeze(['No implicit cell creation, formula editing or recalculation', 'Numeric replacement of existing numeric cells requires exact original encoding', 'Resizing writes reject unsupported relocation records and container layouts', 'Plain string replacement removes selected rich text runs', 'String-to-boolean/error and boolean/error-to-number/string conversions unsupported']),
  });
 /** BIFF8 Excel document. Does not create cells or recalculate formula caches. */
 export class XlsDocument extends Ole2DocumentBase {
@@ -77,6 +78,7 @@ export class XlsDocument extends Ole2DocumentBase {
  get sheets(): readonly XlsSheetNode[] { return this.#sheetNodes; }
  #model: XlsWorkbook;
  #needsRecalculation = false;
+ #settingCellValue = false;
  constructor(input: Uint8Array) {
   super(input);
   const bytes = this.getBytes();
@@ -99,6 +101,12 @@ export class XlsDocument extends Ole2DocumentBase {
  }
  /** @internal All changes are validated and parsed before committing bytes. */
  setCellValue(sheetIndex: number, row: number, col: number, value: XlsCellValue): void {
+  if (this.#settingCellValue) throw new UnsupportedOle2EditError('reentrant-cell-edit');
+  this.#settingCellValue = true;
+  try { this.#applyCellValue(sheetIndex, row, col, value); }
+  finally { this.#settingCellValue = false; }
+ }
+ #applyCellValue(sheetIndex: number, row: number, col: number, value: XlsCellValue): void {
   if (value !== null && typeof value === 'object') {
    const normalized = normalizeXlsErrorValue(value);
    if (!normalized) throw new UnsupportedOle2EditError('value-type-not-supported');
@@ -109,20 +117,19 @@ export class XlsDocument extends Ole2DocumentBase {
    throw new UnsupportedOle2EditError('formula-edit-not-supported');
   const sheet = this.#model.sheets[sheetIndex];
   if (sheet?.kind !== 'worksheet') throw new UnsupportedOle2EditError('sheet-not-supported');
-  if (cell.value === null)
-   throw new UnsupportedOle2EditError('cell-type-not-supported');
+  if (cell.value === null && value === null) return;
   if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean' && !isXlsErrorValue(value))
    throw new UnsupportedOle2EditError('value-type-not-supported');
-  if (typeof value === 'number' && (typeof cell.value !== 'number' || !Number.isFinite(value)))
+  if (typeof value === 'number' && ((cell.value !== null && typeof cell.value !== 'number') || !Number.isFinite(value)))
    throw new UnsupportedOle2EditError('numeric-type-change-not-supported');
-  if (typeof value === 'string' && typeof cell.value !== 'number' && typeof cell.value !== 'string')
+  if (typeof value === 'string' && cell.value !== null && typeof cell.value !== 'number' && typeof cell.value !== 'string')
    throw new UnsupportedOle2EditError('string-type-change-not-supported');
   if ((typeof value === 'boolean' || isXlsErrorValue(value)) && typeof cell.value === 'string')
    throw new UnsupportedOle2EditError('bool-error-type-change-not-supported');
   if (sameValue(cell.value, value)) return;
   const worksheetIndex = this.#model.sheets.slice(0, sheetIndex).filter(s => s.kind === 'worksheet').length;
   const edit = { row, col, value, worksheetIndex };
-  const result = typeof value === 'number'
+  const result = cell.value === null ? editXlsBlankCell(this.getBytes(), { ...edit, value }) : typeof value === 'number'
    ? editXlsNumericCell(this.getBytes(), { ...edit, value })
    : typeof value === 'string' ? editXlsPreservedStringCell(this.getBytes(), { ...edit, value })
    : editXlsBoolErrorCell(this.getBytes(), { ...edit, value });
