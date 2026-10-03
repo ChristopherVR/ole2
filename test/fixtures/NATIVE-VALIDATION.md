@@ -309,3 +309,28 @@ ambiguous ownership or unsafe relocation atomically. They establish the captured
 semantics of these owned fixtures, not pagination, rendering or full DOC/XLS
 parity. The VSD text matrix and refusal gates remain unchanged; this increment
 adds no native VSD transform support.
+
+## Direct PPT font runs and VSD drawing-order reads
+
+The owned `ppt/native-text.ppt` source
+`2bae7c1501262b79d2d9840ba968a5ed7b4ee12facde52082d3b114772f9b4e0`
+passed native PowerPoint 16 title-size changes from 28 to 32 points and Unicode
+title-size changes from 24 to 30. Output SHA256 is
+`505d12c3569cba74b5b66a8df93960d1d0c1afdfdc33a598e73d06fcea24cc45`;
+only two existing CFB bytes differ. All selected character sizes changed as
+declared; other captured fonts, styles, text, geometry, notes and counts stayed
+exact. Native save/reopen matched an unchanged native-save control except the
+declared sizes; both controls normalized the same six notes-shape IDs. The
+tracked `prepare-native-ppt-font-runs.mjs` driver reproduces the artifact without
+launching PowerPoint. Final model lookup caching preserves these output bytes.
+
+The owned `vsd/native-hierarchy.vsd` fixture contains two native v11 pages with
+IDs 0 and 4, sizes 8-by-11 and 11-by-8 inches, a group, a master, a custom style,
+two layers, Unicode text and multiple geometry sections. Native save/reopen
+preserved all captured fields. Page drawing orders `[2, 1, 5, 6]` and `[1, 2, 3]`
+and group-five children `[3, 4]` match the new validated ShapeList metadata.
+The previous physical-order root list `[1, 2, 5, 6]` did not match native order.
+Existing flat shape IDs, parent/master references and local stored coordinates
+remain unchanged; no-op serialization is byte-exact. Master/style evaluation and
+hidden secondary geometry remain unresolved. This establishes declared read
+semantics, not drawing rendering or native transform admission.
