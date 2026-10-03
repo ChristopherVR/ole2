@@ -1,7 +1,10 @@
 param(
     [Parameter(Mandatory)][string]$InputPath,
     [Parameter(Mandatory)][string]$OutputPath,
-    [int]$MaxCells = 10000
+    [int]$MaxCells = 10000,
+    [switch]$CaptureRichText,
+    [int]$MaxRichTextCharacters = 4096,
+    [string]$RichTextCells = ''
 )
 # Explicit fixture paths only. Never enumerate recent documents or run macros.
 $ErrorActionPreference = 'Stop'
@@ -44,16 +47,36 @@ try {
             $document = $app.Workbooks.Open($inputFile, 0, $true, [Type]::Missing, '', '', $true, [Type]::Missing, [Type]::Missing, $false, $false, [Type]::Missing, $false)
             $app.Calculation = -4135 # manual; do not recalculate during snapshot
             $sheets = @()
+            $richSelection = @($RichTextCells.Split(';', [StringSplitOptions]::RemoveEmptyEntries))
+            $richSeen = @{}
             foreach ($sheet in $document.Worksheets) {
                 $range = $sheet.UsedRange
                 if ([long]$range.Rows.Count * $range.Columns.Count -gt $MaxCells) { throw "Used range exceeds MaxCells=$MaxCells" }
                 $cells = @()
                 foreach ($cell in $range.Cells) {
                     if ($null -ne $cell.Value2 -or $cell.HasFormula) {
-                        $cells += [ordered]@{ row = $cell.Row - 1; col = $cell.Column - 1; value = $cell.Value2; formula = $cell.Formula; numberFormat = $cell.NumberFormat; bold = $cell.Font.Bold; italic = $cell.Font.Italic; font = $cell.Font.Name; size = $cell.Font.Size; merge = [string]$cell.MergeArea.Address() }
+                        $entry = [ordered]@{ row = $cell.Row - 1; col = $cell.Column - 1; value = $cell.Value2; formula = $cell.Formula; numberFormat = $cell.NumberFormat; bold = $cell.Font.Bold; italic = $cell.Font.Italic; font = $cell.Font.Name; size = $cell.Font.Size; merge = [string]$cell.MergeArea.Address() }
+                        $richKey = $sheet.Name + '!' + ($cell.Row - 1) + ',' + ($cell.Column - 1)
+                        if ($CaptureRichText -and ($richSelection.Count -eq 0 -or $richSelection -contains $richKey) -and $cell.Value2 -is [string]) {
+                            $richSeen[$richKey] = $true
+                            $text = [string]$cell.Value2
+                            if ($text.Length -gt $MaxRichTextCharacters) { throw "Rich text exceeds MaxRichTextCharacters=$MaxRichTextCharacters" }
+                            $characters = @()
+                            for ($index = 1; $index -le $text.Length; $index++) {
+                                $font = $cell.Characters($index, 1).Font
+                                $characters += [ordered]@{ font = $font.Name; size = $font.Size; bold = $font.Bold; italic = $font.Italic; underline = $font.Underline; color = $font.Color }
+                            }
+                            $entry['characterFonts'] = $characters
+                        }
+                        $cells += $entry
                     }
                 }
                 $sheets += [ordered]@{ name = $sheet.Name; visible = $sheet.Visible; cells = $cells; shapes = $sheet.Shapes.Count; comments = $sheet.Comments.Count; hyperlinks = $sheet.Hyperlinks.Count }
+            }
+            if ($CaptureRichText) {
+                foreach ($selected in $richSelection) {
+                    if (-not $richSeen.ContainsKey($selected)) { throw "Requested rich text cell missing or non-string: $selected" }
+                }
             }
             $snapshot = [ordered]@{ consumer = 'Microsoft Excel'; version = $app.Version; date1904 = $document.Date1904; sheets = $sheets; names = @($document.Names | ForEach-Object { [ordered]@{ name = $_.Name; refersTo = $_.RefersTo } }) }
         }

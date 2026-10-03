@@ -37,6 +37,20 @@ It caps Excel used ranges at 10,000 cells. COM setup/open failures are failures,
 never successful fidelity evidence. Automated callers should enforce their own
 process timeout and report blocked/hung consumers separately.
 
+For small rich-string corpus cases, add `-CaptureRichText` to both Excel snapshot
+commands. This captures each UTF-16 character's font name, size, bold, italic,
+underline and color. It fails when any string exceeds `MaxRichTextCharacters`
+(default4096), so callers cannot silently omit large unverified rich strings.
+To inspect only explicitly selected cells in a mixed corpus, supply
+`-RichTextCells 'Aliases!1,0;Aliases!1,1'` using sheet name and zero-based row,col
+coordinates separated by semicolons. Every requested cell must exist and contain
+text, or the snapshot fails. Character font evidence covers only those declared
+cells; all other normal snapshot fields are still captured.
+Ordinary snapshots retain their previous fields and avoid expensive per-character
+COM calls. Excel's `Formula` getter can return null for long string cells; native
+baseline10,000/12,000-character strings already exhibit this behavior. Assert the
+full `Value2` text and explicitly record the consumer's null formula field.
+
 Native snapshots capture semantic evidence: Word paragraphs/style/font flags,
 headers/footers, main-story field codes/results, footnotes and table/shape counts;
 Excel cell values/formulas/formats and sheet/name/shape metadata;
