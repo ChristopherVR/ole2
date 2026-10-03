@@ -1,4 +1,4 @@
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
@@ -16,13 +16,14 @@ const toWsl = p => {
   if (!match) throw new Error('WSL mode requires explicit Windows drive paths');
   return `/mnt/${match[1].toLowerCase()}/${match[2].replaceAll('\\', '/')}`;
 };
-let command, prefix, executable;
+let command, prefix, executable, libraryDirectory;
 if (mode === '--native') {
   executable = resolve(tool);
   command = executable;
   prefix = [];
 } else {
   const root = resolve(tool);
+  libraryDirectory = join(root, 'usr', 'lib', 'x86_64-linux-gnu');
   executable = join(root, 'usr', 'bin', 'vsd2raw');
   command = 'wsl.exe';
   prefix = ['-d', distro, '--', 'env', `LD_LIBRARY_PATH=${toWsl(join(root, 'usr', 'lib', 'x86_64-linux-gnu'))}`, toWsl(executable)];
@@ -39,11 +40,18 @@ const callbacks = parsed.stdout.replaceAll('\r\n', '\n');
 if (!callbacks.includes('startDocument()') || !/^endDocument(?:\(\))?\s*$/m.test(callbacks) || !callbacks.includes('startPage(')) {
   throw new Error('Reader did not produce a complete nonempty drawing callback document');
 }
+if (/:\s*(?:nan|[+-]?inf)(?:in|pt|cm|%)(?:\W|$)/i.test(callbacks)) {
+  throw new Error('Reader emitted non-finite drawing coordinates; semantic acceptance not established');
+}
 const sha256 = p => createHash('sha256').update(readFileSync(p)).digest('hex');
+const parserLibraries = mode === '--wsl' ? readdirSync(libraryDirectory)
+  .filter(name => /^lib(?:visio|revenge).*\.so\.\d+\.\d+\.\d+$/.test(name))
+  .map(name => { const p = join(libraryDirectory, name); return { path: p, sha256: sha256(p) }; }) : [];
 writeFileSync(output, JSON.stringify({
   consumer: 'libvisio vsd2raw', version, execution: mode === '--wsl' ? `WSL ${distro}` : 'native executable',
   evidence: 'independent-library-drawing-callbacks', nativeVisio: false, fullFidelity: false,
   input: { path: inputPath, sha256: sha256(inputPath) }, executable: { path: executable, sha256: sha256(executable) },
+  parserLibraries, libraryProvenanceScope: 'WSL extracted parser/render-callback libraries only; complete dynamic dependency inventory not asserted',
   limits: { inputBytes: 16 * 1024 * 1024, outputBytes: 8 * 1024 * 1024, timeoutMilliseconds: 30000 },
   pages: (callbacks.match(/startPage\(/g) ?? []).length,
   paths: (callbacks.match(/drawPath\s*\(/g) ?? []).length,
