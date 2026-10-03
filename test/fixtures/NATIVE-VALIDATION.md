@@ -260,3 +260,23 @@ Hello no-op serialization is byte-identical to the literal source. A repeated
 Jello/World/Again model edit produces the same Again artifact tested natively.
 Both fixtures have zero masters and layers; these gates establish captured
 semantics for the stated text cases, not rendered or full-format fidelity.
+
+## Seeded native text matrix on 0.10.1
+
+The released-equivalent build `92a2750c9031dd97448b00dae7fd9a2807be6570` passed
+20 additional native Visio16.0.20430.20140 text cases on the two owned native VSD
+fixtures. Seed `0xc0deface` pins varied ASCII entropy, Japanese/Greek/Cyrillic BMP,
+combining marks, one and two supplementary surrogate pairs, the Unicode label,
+repeated edits and edit/revert. Exact UTF16 text and control positions were
+compared alongside every other captured native field. Five representative cases
+also passed native save/reopen. This adds no transform-writing coverage.
+
+`node scripts/prepare-native-vsd-text-matrix.mjs dist/index.js` reproduces inputs,
+outputs, 69 module hashes and the seed. It also asserts 33 atomic refusals for
+length/control/NUL/unpaired-surrogate changes, clean and already-edited state,
+and a shape without explicit text. Two serialized files after clean refusals
+opened natively with exact baseline captures. Generation alone is not native
+validation. The actual run used 27 bounded fresh owned instances, macro-disabled
+OpenEx flags 458 and EventsEnabled=false; all process proofs confirmed cleanup.
+These are captured semantic gates on flat owned fixtures with zero masters and
+layers, not rendered or full-format fidelity.
