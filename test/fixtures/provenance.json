@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "policy": "Existing repository fixtures only. Unknown origin is explicitly unverified; no public-corpus license or native fidelity is inferred from parser tests.",
+  "fixtures": [
+    { "path": "ole-word-97.doc", "sha256": "70f55e2046c0027174f6172755ef71ed2098978bba984d1e247d2365c33091d0", "format": "Word 97-2003", "provenance": "unverified-existing-repository-fixture", "generator": null },
+    { "path": "sample-deck.ppt", "sha256": "cfc94b03552ba3b56db3a39a289ddee4c346db68ee491ed376cd71a96bb02cf1", "format": "PowerPoint 97-2003", "provenance": "unverified-existing-repository-fixture", "generator": null },
+    { "path": "picture-fixture.ppt", "sha256": "b97e7a8f5ac8f93eb904c1d15bbbe9ce5c46c4d1f361e4bc5713e56210f9c7fa", "format": "PowerPoint 97-2003", "provenance": "unverified-existing-repository-fixture", "generator": null },
+    { "path": "xls/workbook-features.xls", "sha256": "1217785afde55e9711b0c1b378090cd41aef3929876c0c41eff37752ba188217", "format": "BIFF8", "provenance": "repository-owned-synthetic", "generator": "xls/generate-xls-fixtures.ps1", "producer": "Microsoft Excel 16, FileFormat 56", "features": ["formulas", "shared-strings-continuation", "unicode", "hidden-sheets", "names", "errors"] },
+    { "path": "xls/workbook-styles.xls", "sha256": "7a3e57e783d28d0abbe9d90ed7cd3bad38a7c67d3481de77b35a74fc4f651d91", "format": "BIFF8", "provenance": "repository-owned-synthetic", "generator": "xls/generate-xls-fixtures.ps1", "producer": "Microsoft Excel 16, FileFormat 56", "features": ["styles", "merges", "comments", "hyperlinks", "freeze-panes"] },
+    { "path": "xls/workbook-1904.xls", "sha256": "8c61dd9d56d5b6bc24c8113b5a35642059b00b59c9e0945837238051be67b733", "format": "BIFF8", "provenance": "repository-owned-synthetic", "generator": "xls/generate-xls-fixtures.ps1", "producer": "Microsoft Excel 16, FileFormat 56", "features": ["1904-date-system"] },
+    { "path": "xls/workbook-encrypted.xls", "sha256": "ba9ace6a30511828975a522ad104cd3e75c3789db55d85059fcfa55fb3e4f2c3", "format": "BIFF8", "provenance": "repository-owned-synthetic", "generator": "xls/generate-xls-fixtures.ps1", "producer": "Microsoft Excel 16, FileFormat 56", "features": ["password-to-open"], "nativeSnapshot": "excluded-password-protected" }
+  ]
+}
