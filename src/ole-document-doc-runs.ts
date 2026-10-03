@@ -183,6 +183,22 @@ function writeExclusiveOperand(input: Uint8Array, cpStart: number, cpEnd: number
 	if (parsed.physical.some((r) => r !== row && r.blob && r.blob < row.blobEnd && row.blob < r.blobEnd) ||
 		parsed.papx.pns.includes(Math.floor(row.blob / 512)) ||
 		parsed.pieces.some((p) => p.fc < row.blobEnd && row.blob < p.fc + (p.cpEnd - p.cpStart) * (p.compressed ? 1 : 2))) throw new Error('aliased-formatting');
+	// Section exceptions are also stored in WordDocument; reject known aliases.
+	const sed = parsed.fib.sed;
+	if (sed.lcb > LIMIT * 16 + 4) throw new Error('resource-limit');
+	if (sed.lcb) {
+		if (sed.lcb < 4 || (sed.lcb - 4) % 16 || sed.fc > parsed.doc.tableBytes.length - sed.lcb) throw new Error('invalid-formatting');
+		const n = (sed.lcb - 4) / 16, tableView = new DataView(parsed.doc.tableBytes.buffer, parsed.doc.tableBytes.byteOffset, parsed.doc.tableBytes.byteLength);
+		const wordView = new DataView(parsed.word.buffer, parsed.word.byteOffset, parsed.word.byteLength);
+		for (let i = 0; i < n; i++) {
+			const at = tableView.getInt32(sed.fc + (n + 1) * 4 + i * 12 + 2, true);
+			if (at === -1) continue;
+			if (at < 0 || at > parsed.word.length - 2) throw new Error('invalid-formatting');
+			const end = at + 2 + wordView.getUint16(at, true);
+			if (end > parsed.word.length) throw new Error('invalid-formatting');
+			if (at < row.blobEnd && row.blob < end) throw new Error('aliased-formatting');
+		}
+	}
 	if (previous === value) return input;
 	const word = parsed.word.slice(); word[operand.at] = value & 255;
 	if (size) word[operand.at + 1] = value >>> 8;

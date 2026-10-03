@@ -14,11 +14,13 @@ function prepared(variant = 'valid') {
  const slot = slots.find(s => {const b = page + word[s]! * 2; return word.subarray(b+1,b+1+word[b]!).some((v,i,a)=>v===0x35 && a[i+1]===8);})!;
  const blob = page + word[slot]! * 2, length = word[blob]!;
  word.copyWithin(blob+4,blob+7,blob+1+length); word[blob]=length-3; word.set([0x3e,0x2a,1],blob+1);
+ if(variant==='section-alias') new DataView(word.buffer).setUint16(blob-2,16,true);
  if(variant==='duplicate') word.set([0x3e,0x2a,1],blob+4);
  if(variant==='invalid') word[blob+3]=4;
  if(variant==='opaque') word[blob+4]=0x99;
  if(variant==='shared') word[slots.find(s=>word[s]!==word[slot])!]=word[slot]!;
  const table=cfb.tableBytes.slice();
+ if(variant==='section-alias') new DataView(table.buffer).setInt32(fib.sed.fc+10,blob-2,true);
  if(variant==='reserved') new DataView(table.buffer).setUint32(fib.plcfbteChpx.fc+(bte.fcs.length)*4, bte.pns[0]! | 0x80000000,true);
  if(variant==='alias') new DataView(table.buffer).setUint32(fib.plcfbtePapx.fc+8,page/512 | 0x80000000,true);
  return cfb.rewrap(word,table);
@@ -52,6 +54,7 @@ describe('existing exclusive DOC underline',()=>{
   expect(doc.paragraphs[1]!.runs[0]!.directUnderline).toBeUndefined();expect(()=>{doc.paragraphs[1]!.runs[0]!.directUnderline='single';}).toThrow('inherited-formatting');expect(doc.dirty).toBe(false);
   const input=prepared(),run=new DocDocument(input).paragraphs[1]!.runs[0]!;expect(()=>writeDocCharacterRunUnderline(input,run.cpStart+1,run.cpEnd,'double')).toThrow('unsupported-formatting');
  });
+ it('refuses a valid section-exception pointer alias without changing any bytes',()=>{const input=prepared('section-alias'),doc=new DocDocument(input);expect(()=>{doc.paragraphs[1]!.runs[0]!.directUnderline='double';}).toThrow('aliased-formatting');expect(doc.serialize()).toEqual(input);expect(doc.dirty).toBe(false);});
  it('bounds aggregate CHPX operands before allocating unbounded stale rows',()=>{
   const cfb=unwrapDocBytes(prepared())!, fib=readDocFib(cfb.wordDocBytes), pages=3200, base=Math.ceil(cfb.wordDocBytes.length/512)*512;
   const word=new Uint8Array(base+pages*512);word.set(cfb.wordDocBytes);const table=new Uint8Array(cfb.tableBytes.length+pages*8+4);table.set(cfb.tableBytes);
