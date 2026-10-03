@@ -33,9 +33,11 @@ const SAFE_OPERANDS = new Set([
 ]);
 
 /** Variable-size special paragraph/table operands are deliberately refused. */
-function parsePrls(word: Uint8Array, start: number, end: number): Prl[] {
+function parsePrls(word: Uint8Array, start: number, end: number, budget: { remaining: number }): Prl[] {
 	const view = new DataView(word.buffer, word.byteOffset, word.byteLength), out: Prl[] = [];
 	for (let at = start; at < end;) {
+		if (budget.remaining <= 0) throw new Error('Formatting SPRM limit');
+		budget.remaining--;
 		if (at + 2 > end) throw new Error('Truncated SPRM');
 		const opcode = view.getUint16(at, true), spra = opcode >>> 13;
 		let count = [1, 1, 2, 4, 2, 2, 0, 3][spra]!;
@@ -52,7 +54,7 @@ function parsePrls(word: Uint8Array, start: number, end: number): Prl[] {
 
 function parsePhysicalRuns(word: Uint8Array, table: ReturnType<typeof parseBteTable>): PhysicalRun[] {
 	if (table.pns.length > LIMIT) throw new Error('Formatting page limit');
-	const view = new DataView(word.buffer, word.byteOffset, word.byteLength), out: PhysicalRun[] = [];
+	const view = new DataView(word.buffer, word.byteOffset, word.byteLength), out: PhysicalRun[] = [], budget = { remaining: 262_144 };
 	for (let bte = 0; bte < table.pns.length; bte++) {
 		const page = (table.pns[bte]! & 0x3fffff) * 512;
 		if (page > word.length - 512) throw new Error('Truncated CHPX page');
@@ -65,7 +67,7 @@ function parsePhysicalRuns(word: Uint8Array, table: ReturnType<typeof parseBteTa
 			const offset = word[page + (count + 1) * 4 + i]! * 2;
 			if (offset && (offset < header || offset + 1 + word[page + offset]! > 511)) throw new Error('Invalid CHPX blob');
 			const blob = offset ? page + offset : 0, blobEnd = blob ? blob + 1 + word[blob]! : 0;
-			out.push({ start, end, blob, blobEnd, prls: blob ? parsePrls(word, blob + 1, blobEnd) : [] });
+			out.push({ start, end, blob, blobEnd, prls: blob ? parsePrls(word, blob + 1, blobEnd, budget) : [] });
 		}
 	}
 	out.sort((a, b) => a.start - b.start);

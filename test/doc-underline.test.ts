@@ -52,5 +52,14 @@ describe('existing exclusive DOC underline',()=>{
   expect(doc.paragraphs[1]!.runs[0]!.directUnderline).toBeUndefined();expect(()=>{doc.paragraphs[1]!.runs[0]!.directUnderline='single';}).toThrow('inherited-formatting');expect(doc.dirty).toBe(false);
   const input=prepared(),run=new DocDocument(input).paragraphs[1]!.runs[0]!;expect(()=>writeDocCharacterRunUnderline(input,run.cpStart+1,run.cpEnd,'double')).toThrow('unsupported-formatting');
  });
+ it('bounds aggregate CHPX operands before allocating unbounded stale rows',()=>{
+  const cfb=unwrapDocBytes(prepared())!, fib=readDocFib(cfb.wordDocBytes), pages=3200, base=Math.ceil(cfb.wordDocBytes.length/512)*512;
+  const word=new Uint8Array(base+pages*512);word.set(cfb.wordDocBytes);const table=new Uint8Array(cfb.tableBytes.length+pages*8+4);table.set(cfb.tableBytes);
+  const wv=new DataView(word.buffer),tv=new DataView(table.buffer),fc=cfb.tableBytes.length;
+  for(let i=0;i<=pages;i++)tv.setInt32(fc+i*4,2048+i*2,true);
+  for(let i=0;i<pages;i++){const page=base+i*512;tv.setUint32(fc+(pages+1)*4+i*4,page/512,true);wv.setInt32(page,2048+i*2,true);wv.setInt32(page+4,2050+i*2,true);word[page+8]=5;word[page+10]=255;word[page+511]=1;for(let j=0;j<85;j++)word.set([0x35,8,0],page+11+j*3);}
+  const descriptor=fib.fibRgFcLcbOffset+12*8;wv.setUint32(descriptor,fc,true);wv.setUint32(descriptor+4,pages*8+4,true);
+  const input=cfb.rewrap(word,table), doc=new DocDocument(input);expect(()=>doc.paragraphs[1]!.runs).toThrow('unsupported-formatting');expect(()=>writeDocCharacterRunUnderline(input,23,32,'double')).toThrow('Formatting SPRM limit');expect(doc.dirty).toBe(false);expect(Buffer.compare(Buffer.from(doc.serialize()),Buffer.from(input))).toBe(0);
+ });
  it('validates low-level inputs before inspection',()=>{for(const value of ['wavy',0,null])expect(()=>writeDocCharacterRunUnderline(new Uint8Array(),0,1,value as never)).toThrow('invalid-formatting');});
 });
