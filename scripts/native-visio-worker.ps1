@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][ValidateSet('snapshot','generate','save-copy')][string]$Action,[string]$InputPath,[Parameter(Mandatory)][string]$OutputPath,[string]$SavePath)
+param([Parameter(Mandatory)][ValidateSet('snapshot','generate','generate-literal','save-copy')][string]$Action,[string]$InputPath,[Parameter(Mandatory)][string]$OutputPath,[string]$SavePath)
 $ErrorActionPreference='Stop'
 $app=$null
 $doc=$null
@@ -72,7 +72,7 @@ try {
         $owned=[ordered]@{processId=$process.Id;startTicks=$process.StartTime.ToUniversalTime().Ticks;executable=$process.Path}
         $owned|ConvertTo-Json|Set-Content ($OutputPath+'.process.json') -Encoding utf8
     }
-    if($Action -eq 'generate'){
+    if($Action -in @('generate','generate-literal')){
         $stage='generate'
         $doc=$app.Documents.Add('')
         $page=$doc.Pages.Item(1)
@@ -87,6 +87,9 @@ try {
         $shape.CellsU('FillPattern').FormulaU='0'
         $shape.CellsU('PinX').FormulaU='3 in'
         $shape.CellsU('PinY').FormulaU='3 in'
+        if($Action -eq 'generate-literal'){
+            foreach($entry in @(@('PinX',3.0),@('PinY',3.0),@('Width',4.0),@('Height',2.0),@('LocPinX',2.0),@('LocPinY',1.0),@('Angle',0.0),@('FlipX',0.0),@('FlipY',0.0))){$shape.CellsU($entry[0]).ResultIU=$entry[1]}
+        } else {
         $line=$page.DrawLine(1,6,5,6)
         $line.NameU='Owned line'
         $label=$page.DrawRectangle(1,8,5,9)
@@ -95,6 +98,7 @@ try {
         $label.CellsU('LinePattern').FormulaU='0'
         $label.CellsU('FillPattern').FormulaU='0'
         $label.CellsU('Char.Size').FormulaU='12 pt'
+        }
         $doc.Title='Owned native legacy Visio fixture'
         $doc.Creator='Fixture Author'
         $doc.Company='Fixture Organization'

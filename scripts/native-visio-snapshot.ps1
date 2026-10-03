@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('snapshot','generate','save-copy')][string]$Action='snapshot',
+    [ValidateSet('snapshot','generate','generate-literal','save-copy')][string]$Action='snapshot',
     [string]$InputPath,
     [Parameter(Mandatory)][string]$OutputPath,
     [string]$SavePath
@@ -10,7 +10,7 @@ param(
 # EventsEnabled=false also prevents RUNADDON execution on formula evaluation.
 # https://learn.microsoft.com/en-us/office/vba/api/visio.application.eventsenabled
 $ErrorActionPreference='Stop'
-if($Action -ne 'generate' -and -not $InputPath){throw 'InputPath is required'}
+if($Action -notin @('generate','generate-literal') -and -not $InputPath){throw 'InputPath is required'}
 if($Action -ne 'snapshot' -and -not $SavePath){throw 'SavePath is required'}
 $output=[IO.Path]::GetFullPath($OutputPath)
 $worker=Join-Path $PSScriptRoot 'native-visio-worker.ps1'
