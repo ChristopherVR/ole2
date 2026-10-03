@@ -104,4 +104,38 @@ describe('record-stream', () => {
 		const bytes = record(0, 0, 0x1000, new Uint8Array(0));
 		expect(() => readRecordOrThrow(viewOf(bytes), 100)).toThrow(PptParseError);
 	});
+
+	it('rejects non-integral offsets instead of coercing them into record locations', () => {
+		const view = viewOf(record(0, 0, 0x1000, new Uint8Array(0)));
+		for (const offset of [NaN, Infinity, -Infinity, 0.5, -1]) {
+			expect(readRecord(view, offset)).toBeUndefined();
+			expect(() => readRecordOrThrow(view, offset)).toThrow(PptParseError);
+			expect([...iterateRecords(view, offset, view.byteLength)]).toEqual([]);
+		}
+	});
+
+	it('traverses 20,000 nested containers without exhausting the call stack', () => {
+		const depth = 20000;
+		const bytes = new Uint8Array((depth + 1) * 8);
+		const view = viewOf(bytes);
+		for (let i = 0; i <= depth; i++) {
+			view.setUint16(i * 8, i < depth ? 0xf : 0, true);
+			view.setUint16(i * 8 + 2, i < depth ? 0xf003 : 0x0fa0, true);
+			view.setUint32(i * 8 + 4, (depth - i) * 8, true);
+		}
+		const root = readRecordOrThrow(view, 0);
+		expect(findDescendant(view, root, 0x0fa0)?.headerOffset).toBe(depth * 8);
+		expect(findDescendant(view, root, 0x1234)).toBeUndefined();
+	});
+
+	it('retains depth-first search order and instance filtering', () => {
+		const bytes = record(0xf, 0, 0xf003, concat(
+			record(0xf, 0, 0xf004, record(0, 2, 0x1000, new Uint8Array())),
+			record(0, 3, 0x1000, new Uint8Array()),
+		));
+		const view = viewOf(bytes);
+		const root = readRecordOrThrow(view, 0);
+		expect(findDescendant(view, root, 0x1000)?.recInstance).toBe(2);
+		expect(findDescendant(view, root, 0x1000, 3)?.recInstance).toBe(3);
+	});
 });

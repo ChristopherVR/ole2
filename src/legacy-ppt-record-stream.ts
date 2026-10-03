@@ -48,7 +48,7 @@ export const RECORD_HEADER_SIZE = 8;
  * @returns The parsed record, or undefined when fewer than 8 bytes remain.
  */
 export function readRecord(view: DataView, offset: number): PptRecord | undefined {
-	if (offset < 0 || offset + RECORD_HEADER_SIZE > view.byteLength) {
+	if (!Number.isSafeInteger(offset) || offset < 0 || offset + RECORD_HEADER_SIZE > view.byteLength) {
 		return undefined;
 	}
 	const verAndInstance = view.getUint16(offset, true);
@@ -89,6 +89,9 @@ export function isContainer(rec: PptRecord): boolean {
  * exceeds the range is clamped out (skipped) to tolerate mild corruption.
  */
 export function* iterateRecords(view: DataView, start: number, end: number): Generator<PptRecord> {
+	if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) {
+		return;
+	}
 	let offset = start;
 	const limit = Math.min(end, view.byteLength);
 	while (offset + RECORD_HEADER_SIZE <= limit) {
@@ -150,19 +153,23 @@ export function findDescendant(
 	recType: number,
 	recInstance?: number,
 ): PptRecord | undefined {
-	for (const child of iterateChildren(view, container)) {
+	// Explicit iterators retain depth-first ordering without consuming the JS
+	// call stack on deeply nested (including malicious) container records.
+	const stack = [iterateChildren(view, container)];
+	while (stack.length > 0) {
+		const next = stack[stack.length - 1]!.next();
+		if (next.done) {
+			stack.pop();
+			continue;
+		}
+		const child = next.value;
 		if (
 			child.recType === recType &&
 			(recInstance === undefined || child.recInstance === recInstance)
 		) {
 			return child;
 		}
-		if (isContainer(child)) {
-			const found = findDescendant(view, child, recType, recInstance);
-			if (found) {
-				return found;
-			}
-		}
+		if (isContainer(child)) stack.push(iterateChildren(view, child));
 	}
 	return undefined;
 }
