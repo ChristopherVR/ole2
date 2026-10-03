@@ -2,7 +2,7 @@
 import { readCompoundFileStream, replaceCompoundFileStream } from './ole2-stream-edit.js';
 import { PptParseError, readRecordOrThrow, type PptRecord } from './legacy-ppt-record-stream.js';
 import { RT, OA, HEADER_TOKEN_PLAIN, HEADER_TOKEN_ENCRYPTED } from './legacy-ppt-record-types.js';
-import { buildPersistDirectory } from './ppt/persist-directory.js';
+import { buildPersistDirectory, parseUserEditAtom } from './ppt/persist-directory.js';
 
 export class PptTextError extends PptParseError {
 	constructor(public readonly code: 'corrupt' | 'encrypted' | 'unsupported-version', message: string) {
@@ -157,6 +157,47 @@ export function readPptSlideTexts(input: Uint8Array): PptTextDocument {
 export type PptTextEditResult =
 	| { status: 'edited' | 'unchanged'; bytes: Uint8Array }
 	| { status: 'unsupported'; bytes: Uint8Array; reason: string };
+/** Guard complete owning containers, including opaque bytes not exposed as text. */
+function textOwnershipRefusal(input: Uint8Array, stream: Uint8Array, persistId: number, atom: PptTextAtom): string | undefined {
+	const user = readCompoundFileStream(input, ['Current User']);
+	if (!user) throw new PptParseError('Missing Current User stream');
+	const view = viewOf(stream), uv = viewOf(user), cu = readRecordOrThrow(uv, 0);
+	const editOffset = uv.getUint32(cu.dataOffset + 8, true);
+	const { directory, currentEdit } = buildPersistDirectory(view, editOffset);
+	const slideOffset = directory.get(persistId);
+	if (slideOffset === undefined) return 'Missing active slide persist object';
+	const slide = readRecordOrThrow(view, slideOffset), text = readRecordOrThrow(view, atom.headerOffset);
+	const textEnd = text.dataOffset + text.recLen;
+	const owners = [persistId];
+	// Outline atoms live in the active Document rather than the Slide container.
+	if (atom.headerOffset < slide.dataOffset || textEnd > slide.dataOffset + slide.recLen) {
+		const docOffset = directory.get(currentEdit.docPersistIdRef);
+		if (docOffset === undefined) return 'Missing outline text owner';
+		const doc = readRecordOrThrow(view, docOffset);
+		if (atom.headerOffset < doc.dataOffset || textEnd > doc.dataOffset + doc.recLen) return 'Text is outside its active owning containers';
+		owners.push(currentEdit.docPersistIdRef);
+	}
+	for (const ownerId of owners) {
+		const owned = readRecordOrThrow(view, directory.get(ownerId)!);
+		const start = owned.headerOffset, end = owned.dataOffset + owned.recLen;
+		if (end > view.byteLength) return 'Unbounded text owning persist object';
+		const overlaps = (offset: number): boolean => {
+			const other = readRecordOrThrow(view, offset), otherEnd = other.dataOffset + other.recLen;
+			if (otherEnd > view.byteLength) throw new PptParseError('Unbounded live persist object prevents safe text edit');
+			return start < otherEnd && other.headerOffset < end;
+		};
+		for (const [id, offset] of directory) if (id !== ownerId && overlaps(offset)) return 'Text owning container overlaps another live persist object';
+		const visited = new Set<number>();
+		for (let offset = editOffset; offset;) {
+			if (visited.has(offset) || visited.size >= 10000) return 'Invalid text save-history ownership';
+			visited.add(offset);
+			const edit = parseUserEditAtom(view, offset);
+			if (overlaps(offset) || overlaps(edit.offsetPersistDirectory)) return 'Text owning container overlaps save-history metadata';
+			offset = edit.offsetLastEdit;
+		}
+	}
+	return undefined;
+}
 /** Replace an existing active text atom in its fixed character slots. All CFB bytes
  * outside its payload remain unchanged, including unknown records and streams.
  * Styles and hyperlink ranges stay at their original character offsets. */
@@ -186,6 +227,8 @@ export function editPptSlideText(input: Uint8Array, edit: {
 			if (value >= 0xdc00 && value <= 0xdfff && !(edit.text.charCodeAt(i - 1) >= 0xd800 && edit.text.charCodeAt(i - 1) <= 0xdbff))
 				return reject('Unpaired UTF-16 surrogate');
 		}
+		const ownership = textOwnershipRefusal(input, stream, model.slides[edit.slideIndex]!.persistId, atom);
+		if (ownership) return reject(ownership);
 		const output = stream.slice(), view = viewOf(output), start = atom.headerOffset + 8;
 		for (let i = 0; i < edit.text.length; i++) {
 			if (atom.encoding === 'utf16') view.setUint16(start + i * 2, edit.text.charCodeAt(i), true);
