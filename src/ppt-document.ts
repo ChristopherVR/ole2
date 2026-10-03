@@ -1,4 +1,4 @@
-/** Active binary PPT text model backed by preservation-safe stream edits. */
+/** Active binary PPT text and shape models backed by preserving stream edits. */
 import { Ole2DocumentBase, UnsupportedOle2EditError } from './ole2-document-base.js';
 import { editPptSlideText, readPptSlideTexts, type PptTextAtom } from './legacy-ppt-text.js';
 import { readPptSlideShapes, type PptShapeRecord, type PptShapeBounds } from './legacy-ppt-shape-reader.js';
@@ -40,8 +40,10 @@ export class PptText {
 export class PptSlide {
 	readonly slideId: number;
 	readonly persistId: number;
-	/** Active outline atoms followed by inline atoms; shape refs are unresolved. */
+	/** Active outline atoms followed by inline atoms; outline shape refs remain unresolved. */
 	readonly texts: readonly PptText[];
+	/** Flat OfficeArt preorder, including group descendants with parentGroupId.
+	 * Canvas patriarchs/background structures remain preserved outside this list. */
 	readonly shapes: readonly PptShape[];
 	constructor(slideId: number, persistId: number, texts: readonly PptText[], shapes: readonly PptShape[] = []) {
 		this.slideId = slideId; this.persistId = persistId;
@@ -86,9 +88,10 @@ export class PptShape {
 	set height(value: number) { this.bounds = { ...this.#requiredBounds(), height: value }; }
 }
 
-/** Indexed active slides with transactional fixed-length text edits. Unsupported
- * geometry, formatting, notes, mirrors and unknown records remain in the CFB.
- * This model does not claim that text atoms correspond one-to-one to shapes. */
+/** Indexed active slides with transactional fixed-length text and guarded small
+ * anchor edits. Opaque properties, formatting, notes and unknown records stay
+ * in the CFB. Shape text links are exposed only for validated inline atoms;
+ * unresolved outline references are not inferred from positional indexes. */
 export class PptDocument extends Ole2DocumentBase {
 	get kind(): 'ppt' { return 'ppt'; }
 	get capabilities(): typeof PPT_CAPABILITIES { return PPT_CAPABILITIES; }
