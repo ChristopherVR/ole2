@@ -24,7 +24,14 @@ try {
                 $range = $paragraph.Range
                 $paragraphs += [ordered]@{ text = $range.Text; style = [string]$range.Style.NameLocal; bold = $range.Font.Bold; italic = $range.Font.Italic; size = $range.Font.Size; font = $range.Font.Name }
             }
-            $snapshot = [ordered]@{ consumer = 'Microsoft Word'; version = $app.Version; paragraphs = $paragraphs; tables = $document.Tables.Count; shapes = $document.Shapes.Count; inlineShapes = $document.InlineShapes.Count; sections = $document.Sections.Count }
+            $headers = @()
+            foreach ($section in $document.Sections) {
+                foreach ($header in $section.Headers) { if ($header.Exists) { $headers += [ordered]@{ section = $section.Index; kind = $header.Index; text = $header.Range.Text } } }
+                foreach ($footer in $section.Footers) { if ($footer.Exists) { $headers += [ordered]@{ section = $section.Index; kind = -$footer.Index; text = $footer.Range.Text } } }
+            }
+            $fields = @($document.Fields | ForEach-Object { [ordered]@{ type = $_.Type; code = $_.Code.Text; result = $_.Result.Text } })
+            $footnotes = @($document.Footnotes | ForEach-Object { $_.Range.Text })
+            $snapshot = [ordered]@{ consumer = 'Microsoft Word'; version = $app.Version; paragraphs = $paragraphs; tables = $document.Tables.Count; shapes = $document.Shapes.Count; inlineShapes = $document.InlineShapes.Count; sections = $document.Sections.Count; headers = $headers; fields = $fields; footnotes = $footnotes }
         }
         '.xls' {
             $app = New-Object -ComObject Excel.Application
