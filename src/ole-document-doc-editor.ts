@@ -29,10 +29,11 @@
  *
  * ## Scope limits (checked, not assumed)
  *
- * Character-count-changing edits require a document whose only populated character-position-keyed table
- * is the (mandatory, always present) section table `PlcfSed`, which this
- * module updates correctly for any number of sections. A document that also
- * uses footnotes, comments/annotations, fields, or bookmarks is left
+ * Character-count-changing edits update section boundaries and the main-story
+ * field PLC, preserving its opaque records. Length-changing edits require plain
+ * paragraphs wholly outside field code/result ranges; fields are never evaluated.
+ * A document that also uses footnotes, comments/annotations, other-story
+ * fields, or bookmarks is left
  * UNCHANGED (`writeOleDocParagraphEdit` returns the original bytes; the
  * `tryWriteOleDocParagraphEdit` API returns an explicit rejection reason): those
  * features add their own character-position-keyed tables that a paragraph
@@ -67,9 +68,10 @@ import {
 } from './ole-document-doc-pieces.js';
 import type { DocPiece } from './ole-document-doc-pieces.js';
 import { encodeCp1252 } from './ole-document-doc-cp1252.js';
+import { shiftDocMainFieldCps, UnsupportedDocFieldEditError } from './ole-document-doc-fields.js';
 
 /** [MS-DOC] 2.5.3 `FibRgFcLcb97` indices for features this editor refuses to edit around (see module doc). */
-const RISKY_PLCF_INDICES = [2, 3, 4, 5, 16, 17, 18, 19, 20, 40, 41, 42, 43, 46, 47, 48, 54, 55, 56, 57, 58, 59, 75, 76, 89, 90];
+const RISKY_PLCF_INDICES = [2, 3, 4, 5, 17, 18, 19, 20, 40, 41, 42, 43, 46, 47, 48, 54, 55, 56, 57, 58, 59, 75, 76, 89, 90];
 const RISKY_STTB_INDICES = [21, 22, 23]; // bkmk sttb, bkf, bkl
 // [MS-DOC] 2.5.7/2.5.8/2.5.10: ignored table-character cache, email metadata,
 // revision-save IDs, and ignored theme/color mapping. None defines live CP ranges.
@@ -80,18 +82,22 @@ const SAFE_EXTENDED_FC_LCB_INDICES = new Set([93, 94, 113, 181, 182]);
 export interface OleDocProcessingLimits {
 	maxCharacters?: number;
 	maxPieces?: number;
+	/** Main-story field PLC records and nesting depth processed for growing edits. */
+	maxFieldRecords?: number;
 }
 
 /** Defaults bound main-story expansion even when fast-save pieces alias physical bytes. */
-export const DEFAULT_OLE_DOC_PROCESSING_LIMITS = Object.freeze({ maxCharacters: 16_777_216, maxPieces: 65_536 });
+export const DEFAULT_OLE_DOC_PROCESSING_LIMITS = Object.freeze({ maxCharacters: 16_777_216, maxPieces: 65_536, maxFieldRecords: 65_536 });
 
 function processingLimits(limits?: OleDocProcessingLimits): Required<OleDocProcessingLimits> {
 	const resolved = {
 		maxCharacters: limits?.maxCharacters ?? DEFAULT_OLE_DOC_PROCESSING_LIMITS.maxCharacters,
 		maxPieces: limits?.maxPieces ?? DEFAULT_OLE_DOC_PROCESSING_LIMITS.maxPieces,
+		maxFieldRecords: limits?.maxFieldRecords ?? DEFAULT_OLE_DOC_PROCESSING_LIMITS.maxFieldRecords,
 	};
 	if (!Number.isSafeInteger(resolved.maxCharacters) || resolved.maxCharacters < 0 ||
-		!Number.isSafeInteger(resolved.maxPieces) || resolved.maxPieces < 0)
+		!Number.isSafeInteger(resolved.maxPieces) || resolved.maxPieces < 0 ||
+		!Number.isSafeInteger(resolved.maxFieldRecords) || resolved.maxFieldRecords < 0)
 		throw new Error('DOC processing limits must be nonnegative safe integers');
 	return resolved;
 }
@@ -292,6 +298,20 @@ export function tryWriteOleDocParagraphEdit(
 		}
 		if (!cfb.canRewrite) return rejected('unsupported-container');
 		if (hasUnsupportedFeatures(cfb.wordDocBytes, fib)) return rejected('unsupported-features');
+		const delta = sanitizedText.length + 1 - (paragraphEndCp - paragraphStartCp);
+		const mainFields = readFcLcbAt(cfb.wordDocBytes, fib, 16);
+		// Never patch a region aliased by another FIB table. Pair87 is the
+		// packed timestamp rather than a table pointer ([MS-DOC] 2.5.6).
+		if (mainFields.lcb > 0) {
+			for (let index = 0; index < fib.fibRgFcLcbCount; index++) {
+				if (index === 16 || index === 87) continue;
+				const other = readFcLcbAt(cfb.wordDocBytes, fib, index);
+				if (other.lcb > 0 && other.fc < mainFields.fc + mainFields.lcb &&
+					other.fc + other.lcb > mainFields.fc) return rejected('invalid-document');
+			}
+		}
+		const shiftedFields = shiftDocMainFieldCps(cfb.tableBytes, mainFields, bodyText,
+			paragraphStartCp, paragraphEndCp, delta, budget.maxFieldRecords);
 
 		const { piece: startPiece, fc: startFc } = pieceAndFcAtCp(pieces, paragraphStartCp);
 		if (pieces.some((piece) => piece.cpStart < paragraphEndCp && piece.cpEnd > paragraphStartCp && piece.prm !== startPiece.prm))
@@ -346,7 +366,6 @@ export function tryWriteOleDocParagraphEdit(
 			prm: startPiece.prm,
 		});
 		if (newPieces.length > budget.maxPieces) return rejected('resource-limit');
-		const delta = sanitizedText.length + 1 - (paragraphEndCp - paragraphStartCp);
 		const newCcpText = fib.ccpText + delta;
 
 		const clxBytes = buildClxBytes(newPieces, prcBytes);
@@ -357,6 +376,7 @@ export function tryWriteOleDocParagraphEdit(
 			cfb.tableBytes.length + clxBytes.length + papxBteBytes.length + chpxBteBytes.length,
 		);
 		newTableBytes.set(cfb.tableBytes, 0);
+		if (shiftedFields) newTableBytes.set(shiftedFields, mainFields.fc);
 		let tableOff = cfb.tableBytes.length;
 		const newClx: FcLcb = { fc: tableOff, lcb: clxBytes.length };
 		newTableBytes.set(clxBytes, tableOff);
@@ -379,6 +399,7 @@ export function tryWriteOleDocParagraphEdit(
 
 		return { status: 'edited', strategy: 'piece-append', bytes: cfb.rewrap(newWordDoc, newTableBytes) };
 	} catch (error) {
+		if (error instanceof UnsupportedDocFieldEditError) return rejected('unsupported-features');
 		if (error instanceof DocResourceLimitError) return rejected('resource-limit');
 		if (error instanceof DocCfbRewriteError) return rejected('unsupported-container');
 		return rejected('invalid-document');

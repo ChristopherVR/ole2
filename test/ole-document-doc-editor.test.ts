@@ -129,7 +129,7 @@ describe('Word 97-2003 piece table editing', () => {
 	});
 
 	it('preserves original formatting runs and CP tables for equal-length edits with other features', () => {
-		const source = mutateWord((word, fib) => new DataView(word.buffer).setUint32(fib.fibRgFcLcbOffset + 16 * 8 + 4, 12, true));
+		const source = mutateWord((word, fib) => new DataView(word.buffer).setUint32(fib.fibRgFcLcbOffset + 17 * 8 + 4, 12, true));
 		const before = unwrapDocBytes(source)!;
 		const replacement = 'Other paragraph plain text.';
 		expect(replacement.length).toBe(paragraphs[0]!.length);
