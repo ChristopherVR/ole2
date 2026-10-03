@@ -7,10 +7,10 @@ separate validation layers.
 
 | Layer/format | Read coverage | Write/edit coverage | Remaining parity gaps |
 | --- | --- | --- | --- |
-| MS-CFB v3/v4 | Bounded directory, FAT/DIFAT, mini/regular stream reads | Flat v3 container creation with valid directory trees; exact nested stream replacement | Generic nested storage creation/resizing; full directory metadata preservation when rebuilding |
+| MS-CFB v3/v4 | Bounded directory, FAT/DIFAT, mini/regular stream reads | Flat v3 creation; exact nested stream replacement; preserving v3 regular-stream growth/shrinkage | New nested storage creation, mini-stream resizing/transitions, v4 resizing and DIFAT expansion |
 | MS-OLEPS properties | Standard SummaryInformation properties | Existing supported text slots only | Creating/expanding properties, complete property-set models |
 | DOC 97–2003 | Piece-table main-body text and paragraph indexes | Guarded paragraph replacement; see API outcome reasons and fixture tests | Complete tables, runs, fields, headers/footnotes, drawings and arbitrary CP-dependent structural edits; fresh-document writer |
-| XLS BIFF8 | All worksheets, values/cached formulas/token text, styles, merges, views, comments, links and names | Exact NUMBER/RK/MULRK numeric edits; guarded first-sheet SST/cell edits | Formula creation/recalculation, complex string resizing, charts/drawings, general workbook creation; BIFF5 and earlier |
+| XLS BIFF8 | All worksheets, values/cached formulas/token text, styles, merges, views, comments, links and names | Exact NUMBER/RK/MULRK edits; preserving existing LABELSST/RK string edits in worksheet tab order, including SST continuations and supported offset relocation | Formula creation/recalculation, unsupported pointer-bearing records and cell conversions, charts/drawings, general workbook creation; BIFF5 and earlier |
 | PPT 97–2003 | Active-save slide ids and outline/inline text; bounded record/persist traversal | Neutral WDeck exporter; guarded fixed-length text replacement in existing files | Full source-to-model import, shape-to-outline reference resolution, arbitrary layout/rich text edits, synchronized OOXML mirrors |
 | VSD V5/V6+ inspection layouts | Signature/version/trailer bounds and metadata | Existing metadata slots only | Drawing/page models and drawing content writer; current support is structural inspection |
 | PUB 97/2000/2002 inspection | Recognized signatures and required streams | Existing metadata slots only | Publication/page models and content writer |
@@ -35,10 +35,20 @@ DOC modifier preservation, the four-sheet XLS B2 numeric edit, and PPT
 `Product Overview` → `Product Snapshot` while retaining captured slide geometry
 and notes. Numeric formula caches are not recalculated by this package.
 
+The next preservation increment independently passed native comparisons for
+semantically unchanged DOC/XLS/PPT regular-stream relocation, nested DOC
+paragraph growth, Unicode and 24,000-code-unit continued-SST strings, and
+rich-string/shared-alias preservation on a later XLS sheet. A repository-owned
+PowerPoint fixture covers ASCII and Unicode text edits with reproducible
+generation and recorded provenance. Original SST entries and unrelated BIFF
+records are retained; BOUNDSHEET/INDEX and ExtSST pointers are updated or the
+edit is explicitly refused. Excel formula caches are retained, not recalculated.
+
 These snapshots cover the fields listed in
 `test/fixtures/NATIVE-VALIDATION.md`; they do not establish complete layout,
-rendering, run-level style, object or media fidelity. String-rebuild verification
-is structural, not native fidelity evidence. Historical DOC/PPT provenance is
+rendering, complete run-level style, object or media fidelity. The newer XLS
+rich-string case captures individual character fonts; it does not establish
+general rich-text editing fidelity. Historical DOC/PPT provenance is
 unverified in the manifest; the repository-owned Excel generator is reproducible.
 No personal documents, embedded macros or objects are executed.
 
@@ -47,9 +57,9 @@ No personal documents, embedded macros or objects are executed.
 1. Grow a reproducible, licensed corpus with independent consumers, including
    complex fields/runs, Excel SST continuations, reordered sheet tabs and
    incremental PPT saves. Keep unsupported and malformed-input outcomes explicit.
-2. Extend preservation-based editors before general reconstruction: nested CFB
-   resizing, richer DOC CP table updates, and XLS string edits that retain every
-   record and rebuild all affected offsets.
+2. Extend preservation-based editors before general reconstruction: mini-stream
+   and v4 allocation changes, richer DOC CP table updates, and further XLS
+   cell conversions and verified pointer-bearing record handling.
 3. Build complete format models and format writers incrementally; share codecs
    with viewer consumers without duplicating renderer or OOXML implementations.
    VSD page/shape support requires its own format lane rather than a metadata claim.

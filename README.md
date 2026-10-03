@@ -75,7 +75,7 @@ const edited = writeLegacyOfficeMetadata(fileBytes, "title", "New title");
 if (edited === fileBytes) console.log("Unchanged or unsupported edit.");
 ```
 
-For Word, `tryWriteOleDocParagraphEdit(bytes, paragraphIndex, text)` returns either `status: 'edited'` with its strategy or `status: 'rejected'` with the original bytes and a reason. Equal-length plain-text edits retain original runs and character-position tables, including untouched headers and fields elsewhere. Growing edits require a simpler supported document and retain paragraph/first-run formatting; nested containers and dependent feature tables are rejected for this path. This remains a paragraph editor rather than a complete Word document model or creator.
+For Word, `tryWriteOleDocParagraphEdit(bytes, paragraphIndex, text)` returns either `status: 'edited'` with its strategy or `status: 'rejected'` with the original bytes and a reason. Equal-length plain-text edits retain original runs and character-position tables, including untouched headers and fields elsewhere. Growing edits require a simpler supported document and retain paragraph/first-run formatting. Supported v3 regular-stream containers retain nested storages, unknown streams and directory metadata; dependent character-position tables and unsupported allocation layouts are refused. This remains a paragraph editor rather than a complete Word document model or creator.
 
 ## Legacy PowerPoint export
 
