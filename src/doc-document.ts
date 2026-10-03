@@ -3,6 +3,10 @@ import { readOleDocParagraphs, tryWriteOleDocParagraphEdit } from './ole-documen
 import { readDocCharacterRuns, readDocParagraphStyleIndices, writeDocCharacterRunFlag, writeDocCharacterRunFontSize } from './ole-document-doc-runs.js';
 import type { DocSprm } from './ole-document-doc-runs.js';
 import type { ParsedDocCharacterRun } from './ole-document-doc-runs.js';
+import { readDocParagraphAlignments, writeDocParagraphAlignment } from './ole-document-doc-paragraph-format.js';
+
+/** Logical alignment relative to paragraph direction; not resolved physical layout. */
+export type DocParagraphAlignment = 'start' | 'center' | 'end' | 'justify';
 
 /** Direct CHPX exceptions. Undefined flags are inherited or undecoded, rather
  * than false. Handles are snapshots and refuse mutation after any other edit. */
@@ -23,6 +27,7 @@ export interface DocParagraph {
 	text: string;
 	readonly runs?: readonly DocCharacterRun[];
 	readonly styleIndex?: number | undefined;
+	directAlignment?: DocParagraphAlignment | undefined;
 }
 
 /** Rich getters are present on paragraphs returned by DocDocument. Optional
@@ -30,11 +35,12 @@ export interface DocParagraph {
 export interface ParsedDocParagraph extends DocParagraph {
 	readonly runs: readonly DocCharacterRun[];
 	readonly styleIndex: number | undefined;
+	directAlignment: DocParagraphAlignment | undefined;
 }
 
 const DOC_CAPABILITIES = Object.freeze({
-	read: Object.freeze(['paragraph-text', 'character-runs', 'direct-character-formatting', 'paragraph-style-index', 'compound-streams']),
-	write: Object.freeze(['paragraph-text', 'existing-direct-bold-italic', 'existing-direct-font-size']),
+	read: Object.freeze(['paragraph-text', 'character-runs', 'direct-character-formatting', 'paragraph-style-index', 'direct-paragraph-alignment', 'compound-streams']),
+	write: Object.freeze(['paragraph-text', 'existing-direct-bold-italic', 'existing-direct-font-size', 'existing-direct-paragraph-alignment']),
 	limitations: Object.freeze([
 		'Paragraph insertion, removal and embedded paragraph breaks are unsupported.',
 		'Character formatting reports direct CHPX exceptions, without resolving styles or piece PRMs.',
@@ -44,6 +50,7 @@ const DOC_CAPABILITIES = Object.freeze({
 		'Unsupported edits and processing limits throw without changing the document.',
 		'Text uses the bounded DOC codec defaults: 16,777,216 main-story characters and 65,536 pieces or field records.',
 		'Rich formatting is bounded to 65,536 physical/mapped runs and paragraph style records.',
+		'Logical paragraph alignment replaces a sole existing exclusive sprmPJc slot. Matching legacy mirrors support center/justify only, with both slots updated. Styles, legacy-only alignment, tables and opaque formatting refuse.',
 	]),
 });
 
@@ -56,6 +63,7 @@ export class DocDocument extends Ole2DocumentBase {
 	#text: readonly string[];
 	#runsCache: { revision: number; runs: readonly ParsedDocCharacterRun[] } | undefined;
 	#stylesCache: { revision: number; styles: readonly (number | undefined)[] } | undefined;
+	#alignmentsCache: { revision: number; alignments: readonly (DocParagraphAlignment | undefined)[] } | undefined;
 
 	constructor(input: Uint8Array) {
 		super(input);
@@ -68,6 +76,11 @@ export class DocDocument extends Ole2DocumentBase {
 				index,
 				get text() { return owner.#text[index]!; },
 				set text(value: string) { owner.#setParagraphText(index, value); },
+				get directAlignment() {
+					try { return owner.#paragraphAlignments()[index]; }
+					catch { throw new UnsupportedOle2EditError('unsupported-formatting'); }
+				},
+				set directAlignment(value: DocParagraphAlignment | undefined) { owner.#setParagraphAlignment(index, value); },
 				get runs() { return owner.#paragraphRuns(index); },
 				get styleIndex() {
 					try { return owner.#paragraphStyles()[index]; }
@@ -78,6 +91,23 @@ export class DocDocument extends Ole2DocumentBase {
 	}
 
 	get paragraphs(): readonly ParsedDocParagraph[] { return this.#paragraphs; }
+
+	#paragraphAlignments(): readonly (DocParagraphAlignment | undefined)[] {
+		if (this.#alignmentsCache?.revision !== this.revision)
+			this.#alignmentsCache = { revision: this.revision, alignments: readDocParagraphAlignments(this.getBytes()) };
+		return this.#alignmentsCache.alignments;
+	}
+
+	#setParagraphAlignment(index: number, value: DocParagraphAlignment | undefined): void {
+		if (typeof value !== 'string') throw new UnsupportedOle2EditError('invalid-formatting');
+		let bytes: Uint8Array;
+		try { bytes = writeDocParagraphAlignment(this.getBytes(), index, value); }
+		catch (error) { throw new UnsupportedOle2EditError(error instanceof Error ? error.message : 'unsupported-formatting'); }
+		const text = readOleDocParagraphs(bytes), alignments = readDocParagraphAlignments(bytes);
+		if (!text || text.length !== this.#text.length || text.some((t, i) => t !== this.#text[i]) || alignments[index] !== value)
+			throw new UnsupportedOle2EditError('invalid-document');
+		this.commitBytes(bytes);
+	}
 
 	#currentRuns(): readonly ParsedDocCharacterRun[] {
 		if (this.#runsCache?.revision !== this.revision)
