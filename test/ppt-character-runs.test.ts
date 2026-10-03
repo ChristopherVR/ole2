@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PptDocument, PptText, type PptCharacterRun } from '../src/ppt-document.js';
 import { readPptCharacterRuns, editPptCharacterFontSize } from '../src/legacy-ppt-text-style.js';
 import { readCompoundFileStream, replaceCompoundFileStream } from '../src/ole2-stream-edit.js';
@@ -107,5 +107,34 @@ describe('PPT direct character-format runs', () => {
 		expect(readPptCharacterRuns(input, { maxStyleBytes: 1 }).every(record => record.status === 'unsupported' && /payload budget/.test(record.diagnostic!))).toBe(true);
 		expect(readPptCharacterRuns(input, { maxRuns: 1 }).every(record => record.status === 'unsupported' && /run budget/.test(record.diagnostic!))).toBe(true);
 		for (const maxRuns of [0, NaN, Infinity, 1.5]) expect(() => readPptCharacterRuns(input, { maxRuns })).toThrow(/Invalid.*limit/);
+	});
+	it('does not cache an old snapshot under a reentrantly changed revision', () => {
+		class ReentrantDocument extends PptDocument {
+			hook?: () => void;
+			protected override getBytes(): Uint8Array { const bytes = super.getBytes(); const hook = this.hook; this.hook = undefined; hook?.(); return bytes; }
+		}
+		const document = new ReentrantDocument(load()), title = document.slides[0]!.texts[0]!, first = title.runs[0]!, second = document.slides[1]!.texts[0]!.runs[0]!;
+		title.text = 'Native title updated';
+		document.hook = () => { second.directFontSizePoints = 30; };
+		expect(() => first.directFontSizePoints).toThrow(/changed during character formatting read/);
+		expect(first.directFontSizePoints).toBe(28); expect(second.directFontSizePoints).toBe(30); expect(first.text).toBe(title.text); expect(document.revision).toBe(2);
+	});
+	it('reads thousands of retained run handles without repeated full-table scans', async () => {
+		const count = 2000, input = await buildPptFile({ widthEmu: 9144000, heightEmu: 5143500, pictures: [], slides: [{ shapes: [{
+			kind: 'shape', spt: 202, isConnector: false, anchor: { x: 0, y: 0, w: 3000000, h: 1000000 },
+			text: { textType: 4, paragraphs: [{ indentLevel: 0, runs: Array.from({ length: count }, () => ({ text: 'x', sizePt: 20 })) }] },
+		}] }] });
+		const document = new PptDocument(input), runs = document.slides[0]!.texts[0]!.runs;
+		expect(runs).toHaveLength(count);
+		let scanned = 0, characters = 0, sizes = 0;
+		const filter = Array.prototype.filter;
+		const spy = vi.spyOn(Array.prototype, 'filter').mockImplementation(function (this: unknown[], ...args: Parameters<typeof filter>) {
+			scanned += this.length; return filter.apply(this, args);
+		});
+		try { for (const run of runs) { characters += run.text.length; sizes += run.directFontSizePoints!; } }
+		finally { spy.mockRestore(); }
+		expect(characters).toBe(count); expect(sizes).toBe(count * 20);
+		// Old getters performed over eight million scanned table slots here.
+		expect(scanned).toBeLessThan(count * 4);
 	});
 });

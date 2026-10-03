@@ -12,6 +12,21 @@ const PPT_CAPABILITIES = Object.freeze({
 	limitations: Object.freeze(['unresolved-outline-shape-text', 'inherited-character-formatting', 'run-splitting-and-style-insertion', 'character-properties-except-existing-font-size', 'outline-and-unsupported-shape-font-size-edits', 'notes-creation-and-inherited-fields', 'variable-length-text', 'OOXML-mirrored-text-and-shapes', 'group-transforms-and-geometry', 'large-anchor-writes', 'inherited-rotated-or-flipped-geometry', 'animations', 'masters', 'embedded-objects']),
 });
 
+const RUN_LOOKUPS = new WeakMap<PptTextRunRecord, Map<number, PptCharacterRunRecord[]>>();
+function resolveCharacterRun(record: PptTextRunRecord, original: PptCharacterRunRecord): PptCharacterRunRecord {
+	let lookup = RUN_LOOKUPS.get(record);
+	if (!lookup) {
+		lookup = new Map();
+		for (const run of record.runs) { const bucket = lookup.get(run.runOffset); if (bucket) bucket.push(run); else lookup.set(run.runOffset, [run]); }
+		RUN_LOOKUPS.set(record, lookup);
+	}
+	const matches = record.status === 'decoded' ? lookup.get(original.runOffset) : undefined, run = matches?.[0];
+	if (matches?.length !== 1 || !run || run.styleHeaderOffset !== original.styleHeaderOffset || run.start !== original.start || run.end !== original.end || run.rawCount !== original.rawCount || run.mask !== original.mask || run.fontSizeOffset !== original.fontSizeOffset)
+		throw new UnsupportedOle2EditError('PPT character run identity no longer matches or is ambiguous');
+	return run;
+}
+const textRunKey = (node: { slideId: number; persistId: number; headerOffset: number }) => `${node.slideId}:${node.persistId}:${node.headerOffset}`;
+
 /** An active text atom, not a shape or a fully decoded rich-text paragraph. */
 export class PptText {
 	readonly slideId: number;
@@ -50,9 +65,7 @@ export class PptText {
 			const model = this.#readRuns(this);
 			this.#runs = Object.freeze(model.runs.map(run => new PptCharacterRun(run, () => {
 				const current = this.#readRuns(this);
-				const matches = current.status === 'decoded' ? current.runs.filter(item => item.runOffset === run.runOffset && item.styleHeaderOffset === run.styleHeaderOffset && item.start === run.start && item.end === run.end && item.rawCount === run.rawCount && item.mask === run.mask && item.fontSizeOffset === run.fontSizeOffset) : [];
-				if (matches.length !== 1) throw new UnsupportedOle2EditError('PPT character run identity no longer matches or is ambiguous');
-				return { text: current.text, run: matches[0]! };
+				return { text: current.text, run: resolveCharacterRun(current, run) };
 			}, value => this.#writeRun(this, run, value))));
 		}
 		return this.#runs;
@@ -175,7 +188,8 @@ export class PptDocument extends Ole2DocumentBase {
 	readonly #unsupported: readonly string[];
 	#shapeCache: { revision: number; slides: ReturnType<typeof readPptSlideShapes> };
 	#notesCache: { revision: number; notes: PptSlideNotes[] };
-	#runsCache: { revision: number; records: PptTextRunRecord[] } | undefined;
+	#runsCache: { revision: number; byIdentity: Map<string, PptTextRunRecord[]> } | undefined;
+	#validatedTextRuns = new WeakMap<PptText, PptTextRunRecord>();
 	get slides(): readonly PptSlide[] { return this.#slides; }
 	get unsupported(): readonly string[] { return this.#unsupported; }
 
@@ -202,16 +216,24 @@ export class PptDocument extends Ole2DocumentBase {
 	}
 
 	#readTextRuns(node: PptText): PptTextRunRecord {
-		if (!this.#runsCache || this.#runsCache.revision !== this.revision) this.#runsCache = { revision: this.revision, records: readPptCharacterRuns(this.getBytes()) };
-		const matches = this.#runsCache.records.filter(record => record.slideId === node.slideId && record.persistId === node.persistId && record.headerOffset === node.headerOffset);
-		if (matches.length !== 1 || matches[0]!.text !== node.text) throw new UnsupportedOle2EditError('PPT text formatting identity no longer matches or is ambiguous');
-		return matches[0]!;
+		if (!this.#runsCache || this.#runsCache.revision !== this.revision) {
+			const revision = this.revision;
+			const byIdentity = new Map<string, PptTextRunRecord[]>();
+			for (const record of readPptCharacterRuns(this.getBytes())) { const key = textRunKey(record), bucket = byIdentity.get(key); if (bucket) bucket.push(record); else byIdentity.set(key, [record]); }
+			if (this.revision !== revision) throw new UnsupportedOle2EditError('Document changed during character formatting read');
+			this.#runsCache = { revision, byIdentity };
+		}
+		const matches = this.#runsCache.byIdentity.get(textRunKey(node)), record = matches?.[0];
+		if (matches?.length !== 1 || !record) throw new UnsupportedOle2EditError('PPT text formatting identity no longer matches or is ambiguous');
+		if (this.#validatedTextRuns.get(node) !== record) {
+			if (record.text !== node.text) throw new UnsupportedOle2EditError('PPT text formatting identity no longer matches or is ambiguous');
+			this.#validatedTextRuns.set(node, record);
+		}
+		return record;
 	}
 	#editRun(node: PptText, original: PptCharacterRunRecord, fontSizePoints: number | undefined): void {
 		const revision = this.revision, current = this.#readTextRuns(node);
-		const matches = current.status === 'decoded' ? current.runs.filter(run => run.runOffset === original.runOffset && run.styleHeaderOffset === original.styleHeaderOffset && run.start === original.start && run.end === original.end && run.rawCount === original.rawCount && run.mask === original.mask && run.fontSizeOffset === original.fontSizeOffset) : [];
-		if (matches.length !== 1) throw new UnsupportedOle2EditError('PPT character run identity no longer matches or is ambiguous');
-		const run = matches[0]!;
+		const run = resolveCharacterRun(current, original);
 		const result = editPptCharacterFontSize(this.getBytes(), { slideId: node.slideId, persistId: node.persistId, headerOffset: node.headerOffset,
 			runOffset: run.runOffset, styleHeaderOffset: run.styleHeaderOffset, start: run.start, end: run.end,
 			expectedFontSizePoints: run.directFontSizePoints, fontSizePoints });
