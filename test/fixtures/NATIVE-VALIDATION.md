@@ -221,3 +221,42 @@ one newly created application process, not by attaching to existing documents.
 The Visio snapshot harness separately uses documented `OpenEx` flags 458 and its
 owned-instance process proof. Compare native save/reopen with unchanged save
 controls where the consumer normalizes IDs or metadata.
+
+## Native compressed-text safety follow-up
+
+A new owned literal-rectangle fixture exposed a native corruption case in the
+0.10 encoder: `Hello\n\n` to `Jello\n\n` produced artifact SHA256
+`d2f460372dc9bf34a8920f9e5eb806520dc8e7da0699aa592f027ff0c672201a`,
+which Visio16 rejected at `OpenEx` with HRESULT `-2032464833`. The accepted
+0.10 World case remains valid narrow evidence; it did not establish that added
+decoded zero padding was safe for other text patterns.
+
+The text-only fix at `6ad98f3c892ce68e4bb5b225de7435c1bd0333df` preserves the
+exact decoded block length and uses bounded token variations to fit the original
+encoded capacity. It refuses edits when it cannot find a safe fit. This introduces
+no transform-writer coverage.
+
+Run `node scripts/prepare-native-vsd-text-safety-edits.mjs dist/index.js` after
+building. The driver pins the owned inputs, records six compiled module hashes,
+seven output hashes and revision state, and checks atomic unsupported-length
+refusal. Generation alone is not native validation.
+
+Five production cases passed fresh macro-disabled native open, native save and
+reopen in Visio16.0.20430.20140. Only the declared COM text changed; all other
+captured cells/formulas/results, geometry, text, IDs, counts and six styles stayed
+exact. Native immediately saved Document.Version is recorded separately from its
+reopened value. The literal fixture SHA256 is
+`14496febd65e0be62aa8fde493c0f07e812ac6181165b18899b2c1c8ea37bec7`.
+
+| Production artifact | SHA256 |
+| --- | --- |
+| literal Jello | `7cbe62c046c62662dda6edb17dc56828b3eb575060ff9868952b083dce52c832` |
+| literal World | `054508166099ee37892c4f0fec32078c90dd0ecdb2526b579c50d6e8b967ce31` |
+| literal Again | `f734f5a168f679f1af8313bc4f59015c8edd9221b45714180b0a7429880a0761` |
+| literal Hallo | `58ae283ade5758e3723dc26ca351b36b2da493202393d35fc06de4c41a59e759` |
+| original three-shape World | `1d8d6d2c214490d4676adc758e4b1e8a0d383449d2cdb146e9bec47c829050bc` |
+
+Hello no-op serialization is byte-identical to the literal source. A repeated
+Jello/World/Again model edit produces the same Again artifact tested natively.
+Both fixtures have zero masters and layers; these gates establish captured
+semantics for the stated text cases, not rendered or full-format fidelity.
