@@ -23,7 +23,13 @@ describe('binary VSD version 11 stored drawing model',()=>{
   expect(shape.text).toBe('Again\n');expect(shape.transform?.pinX).toBe(6);expect(doc.revision).toBe(3);expect(doc.dirty).toBe(true);
   const output=doc.serialize(),reparsed=parseVsd(output),stream=readCompoundFileStream(output,['VisioDocument'])!;
   expect(reparsed.pages[0]!.shapes[0]!.text).toBe('Again\n');expect(reparsed.pages[0]!.shapes[0]!.transform?.width).toBe(5);
-  expect(stream.subarray(54,original.length)).toEqual(original.subarray(54));expect(getStream('OpaqueUnknown')).toEqual(Uint8Array.of(9,4,8,3,5));
+  expect(stream.length).toBe(original.length);
+  const before=readVsdDrawing(input),after=readVsdDrawing(output),oldShape=before.pages[0]!.shapes[0]!,newShape=after.pages[0]!.shapes[0]!;
+  const masked=newShape.textRecord!.block.bytes.slice();
+  for(const record of [oldShape.textRecord!,oldShape.transformRecord!])masked.set(record.block.bytes.subarray(record.offset,record.offset+record.length),record.offset);
+  expect(masked).toEqual(oldShape.textRecord!.block.bytes);
+  expect(after.blocks.map(b=>[b.offset,b.length])).toEqual(before.blocks.map(b=>[b.offset,b.length]));
+  expect(getStream('OpaqueUnknown')).toEqual(Uint8Array.of(9,4,8,3,5));
   expect(readCompoundFileStream(input,['VisioDocument'])).toEqual(original);
  });
  it('no-op stays clean; rejected edits leave bytes/model/revision unchanged',()=>{
@@ -82,7 +88,7 @@ describe('binary VSD version 11 stored drawing model',()=>{
   expect(()=>readVsdDrawing(new Uint8Array(64*1024*1024+1))).toThrow('input-budget');
   for(const limit of [-1,NaN,Infinity,0.5,65*1024*1024])expect(()=>decodeVsdBlock(Uint8Array.of(1,0),limit)).toThrow('Invalid');
  });
- it('preserves exact unknown directory metadata across compressed text growth',()=>{
+ it('preserves exact unknown directory metadata across an in-place compressed text edit',()=>{
   const input=fixture(),v=new DataView(input.buffer),dir=(v.getUint32(48,true)+1)*512;let slot=-1;
   for(let offset=dir;offset<dir+512;offset+=128){const n=v.getUint16(offset+64,true);if(n>=2&&new TextDecoder('utf-16le').decode(input.subarray(offset,offset+n-2))==='OpaqueUnknown'){slot=offset;break;}}
   expect(slot).toBeGreaterThanOrEqual(0);for(let i=80;i<116;i++)input[slot+i]=(i*3)%256;const metadata=input.slice(slot,slot+128);

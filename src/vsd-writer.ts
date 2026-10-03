@@ -1,28 +1,16 @@
 import { resizeCompoundFileStream } from './ole2-stream-resize.js';
 import { encodeVsdBlock } from './vsd-compression.js';
-import { readVsdDrawing, VSD_MAX_BYTES, VsdError, type VsdDrawingData, type VsdRecordLocation, type VsdTransform } from './vsd-reader.js';
+import { readVsdDrawing, VsdError, type VsdDrawingData, type VsdRecordLocation, type VsdTransform } from './vsd-reader.js';
 
-/** Retain the entire original VisioDocument stream and append only the edited
- * leaf and its rewritten pointer-table ancestors. Unknown records/prefixes and
- * unrelated compound streams remain intact. No flattening or Office execution. */
+/** Edit only an exactly fitting leaf at its original offset. Native Visio can
+ * reject relocated page/table blocks even when independent readers accept the
+ * pointer graph, so no ancestor or unknown relocation metadata is rewritten. */
 function replaceRecord(input: Uint8Array, drawing: VsdDrawingData, record: VsdRecordLocation, replacement: Uint8Array): Uint8Array {
  if (!drawing.writable) throw new VsdError('shared-or-overlapping-allocation');
- let block = record.block, decoded = block.bytes.slice(); decoded.set(replacement, record.offset);
- const appended: Uint8Array[] = []; let size = drawing.stream.length;
- const header = drawing.stream.slice();
- for (;;) {
-  const stored = block.format & 2 ? encodeVsdBlock(decoded) : decoded;
-  if (stored.length > VSD_MAX_BYTES - size) throw new VsdError('writer-size-limit');
-  const offset = size; appended.push(stored); size += stored.length;
-  const owner = block.parent ? block.parent.bytes.slice() : header;
-  const view = new DataView(owner.buffer, owner.byteOffset, owner.byteLength);
-  view.setUint32(block.pointerOffset + 8, offset, true); view.setUint32(block.pointerOffset + 12, stored.length, true);
-  if (!block.parent) break;
-  block = block.parent; decoded = owner;
- }
- const stream = new Uint8Array(size); stream.set(header); let offset = header.length;
- for (const bytes of appended) { stream.set(bytes, offset); offset += bytes.length; }
- new DataView(stream.buffer).setUint32(28, stream.length, true);
+ const block = record.block, decoded = block.bytes.slice(); decoded.set(replacement, record.offset);
+ const stored = block.format & 2 ? encodeVsdBlock(decoded) : decoded;
+ if(stored.length!==block.length)throw new VsdError('unsafe-block-relocation');
+ const stream = drawing.stream.slice(); stream.set(stored,block.offset);
  const result = resizeCompoundFileStream(input, drawing.streamPath, stream);
  if (!result.ok) throw new VsdError(`compound-resize-${result.reason}`);
  // Validate the entire reachable graph before the model commits candidate bytes.
