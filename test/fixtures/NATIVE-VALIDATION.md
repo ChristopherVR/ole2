@@ -136,3 +136,88 @@ must be established separately; a source repository license alone does not
 establish the rights to an arbitrary contributed binary. Unverified public test
 samples stay local and untracked. The timeout/output bounds do not guarantee a
 library memory limit or establish malformed-input safety.
+
+## Native gates for the 0.10 parity increment
+
+On 2026-10-03, fresh owned Word, Excel, PowerPoint and Visio instances (executable
+version 16.0.20430.20140) accepted 13 typed-model cases and their native saved
+copies. Inputs were repository-owned synthetic fixtures; macros were disabled,
+inputs opened read-only, and only generated copies were saved. These are captured
+semantic assertions, not rendered or full-format fidelity.
+
+The final combined build at `6a0f171` reproduced all 13 native-gated artifacts
+byte-for-byte. The local evidence report `legacy-parity-evidence.json` has SHA256
+`edb67f8f787a380b67ce1ce772121df2f1b6e04252abe29cda0b7c2899d1b465` and records
+all source, output, native-save and snapshot hashes plus 69 compiled module hashes.
+The report lives in the evidence owner's ignored `.native-validation` directory;
+it is not a shipped fixture or an assertion that generation alone proves fidelity.
+
+Frozen components: DOC `183b248a9770633e24d880f2351feab3f828487b`, XLS
+`60577e0a41368d5cf7f77e4346690766a41b2886`, PPT
+`2a92f4d180edd2b4a48f5570af0cfa7f34b50a7b`, and VSD
+`1d40b76d95d0b39432b8b3a3f5856a5c1508bee5`.
+
+Input fixture SHA256 identities:
+
+| Fixture | SHA256 |
+| --- | --- |
+| `doc/paragraph-alignment.doc` | `a5ea2e6931374327fb8f5c4be50c241a9a742d9c5ede2143dd358ea1982e0ad1` |
+| `xls/workbook-blanks.xls` | `69f3fca43378000aa4a41aee28ad2d04322d67796115b5bbf3ed0e7f5140a295` |
+| `ppt/native-text.ppt` | `2bae7c1501262b79d2d9840ba968a5ed7b4ee12facde52082d3b114772f9b4e0` |
+| `ppt/wide-notes.ppt` | `86905ce486c3fae0d4d63bc3f8187ca3d2ac87b46a599a7c6963d337b189ad42` |
+| `vsd/native-visio16-v11.vsd` | `c6c97822e7bb2cc3e96da9d7d35fe74ac16a7f2c90d19ad4c80967d2896e0974` |
+
+DOC changed only middle-paragraph alignment center to justify and restored center.
+All captured text, per-character fonts, styles, stories, counts and other paragraph
+formatting stayed exact, including native save/reopen. The justify artifact SHA256
+is `d9fc75cbb499ef17dad2ef9623fce8fc664024f9ebd765d140e4179211f6557f`;
+restoring center reproduced the input bytes. Matching physical and logical PAPX
+alignment slots were updated together; this does not establish directional edits.
+
+Eight XLS cases converted existing formatted BLANK/MULBLANK cells to numbers,
+Unicode strings, booleans or errors on two sheets. Exact target values/types were
+asserted while captured non-target cells, formulas, fonts, formats, comments,
+merges and dimensions remained unchanged. Native saved/reopened captures matched.
+
+| XLS artifact | SHA256 |
+| --- | --- |
+| first | `60327dde2cd5e1ebd91020ee3afa052865364de9da22f39f71de8ff50303fa80` |
+| middle | `64867717f60fd0e9c5cffe2e591fa261e73a5f0a622db4d3ed25afe5c36ef2a6` |
+| last | `cdb0349f74b9d27ba426f2984ca9fc19f465e1c1785020fbdbc6e908796e280d` |
+| single-number | `c36694963364c901a046527f8b9268a91c36d4124f1be9c5bb115d3ba4d308d3` |
+| single-string | `1a433e75b8c27f265cd507b124f604c41ad9af7a80997d43d51fe3af0125d7bd` |
+| single-bool | `974a7632c81b4e73b984a0e9172a27888ad78b4104344dac50610104c87e8638` |
+| single-error | `13b1b22afc8c7264c8d22aa5b29c2931b22cc64ce288ee868b7abcbbd56b0d8a` |
+| later | `a77c5fb200b6631c88936f3682caca0b33528a0abdcab83f8f2725d8f76cd7ba` |
+
+Excel baseline, eight edits and eight reopens were explicitly opened with
+`CorruptLoad=0` (`xlNormalLoad`), which does not request object-model recovery.
+The native `RepairMode` property was unavailable and is recorded as null; no
+`RepairMode=false` claim is made.
+
+PPT ASCII notes changed both `notes retained.` suffixes to `notes modified.`;
+artifact SHA256 is `ea4de78e3e5671f38a8cbcd6c8845d76d2ec8d9cdf6f1d6f65b00b29f4983643`.
+UTF16 notes changed `東京 Ω 😀` / `Wide notes.` to `大阪 β 😀` / `Wide model.`
+while retaining the paragraph break and surrogate pair; artifact SHA256 is
+`01abcbfe1bdf12afa02cbf9cd1e61a661d8d489b56422b2689d7f25e078c8b20`.
+All other captured slide/notes text, fonts, geometry, IDs and counts were exact
+before native save. Native saved edits matched unchanged save controls except
+for declared text. PowerPoint remapped six ASCII notes-shape IDs identically in
+the unchanged control; native-save ID preservation is not established.
+
+The VSD production model changed stored `Hello\n\n` to `World\n\n`; COM exposes
+one terminal LF, so the native assertion was `Hello\n` to `World\n`. Artifact
+SHA256 is `cc257f441f2d30fb30ea9b0281fcf4570c092532518a4894a28fee4ae9bf3bdb`.
+Fresh native open/save/reopen retained all other captured page/shape text, cell
+formulas, transforms, geometry, IDs, counts and six styles. Independent Windows
+IStorage inspection retained metadata, stream sizes and all other stream hashes.
+This is one flat page with zero masters and layers, not positive complex-diagram
+coverage. The prior native-rejected relocation output remains a negative gate.
+
+Reproduce candidate edits using each component's tracked preparation driver,
+then use `scripts/native-office-bounded.ps1` with the optional paragraph, blank-cell,
+notes and character-font captures described above. Office ownership is proved by
+one newly created application process, not by attaching to existing documents.
+The Visio snapshot harness separately uses documented `OpenEx` flags 458 and its
+owned-instance process proof. Compare native save/reopen with unchanged save
+controls where the consumer normalizes IDs or metadata.
