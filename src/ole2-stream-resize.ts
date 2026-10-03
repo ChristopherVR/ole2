@@ -1,6 +1,8 @@
-/** Preservation-safe resizing of regular streams in v3 MS-CFB containers. */
+/** Preservation-safe resizing of streams in v3 MS-CFB containers. */
 import { readCompoundFileStream, replaceCompoundFileStream } from './ole2-stream-edit.js';
 import { resizeCompoundFileStreamV4 } from './ole2-stream-resize-v4.js';
+import { appendCompoundAllocations } from './ole2-stream-resize-allocation.js';
+import { resizeMiniCompoundStream } from './ole2-stream-resize-mini.js';
 
 const END = 0xfffffffe, FREE = 0xffffffff, FAT = 0xfffffffd;
 const SECTOR = 512, FAT_ENTRIES = SECTOR / 4;
@@ -77,16 +79,18 @@ function validateHierarchy(slots: Map<number, Slot>): void {
 	if (owners.size !== slots.size - 1) throw new Error('Unreachable directory entries');
 }
 
-/** Replace a regular stream, allowing its payload length to change. The path
- * includes every storage name relative to the root. Existing allocation and
- * directory bytes are retained; only target start/size, affected FAT entries
- * and (if necessary) header FAT count/DIFAT slots change. New payload sectors
- * are appended; old target sectors become free without erasing their bytes.
+/** Replace a stream, allowing its payload length and allocation class to change. The path
+ * includes every storage name relative to the root. Existing hierarchy and
+ * opaque bytes are retained. Changes are limited to target/root allocation
+ * start/size, affected FAT/MiniFAT links and header allocation counts/pointers.
+ * New payload or mini-container sectors are appended; released sectors become
+ * free without erasing their bytes. Emptying a stream needs no new allocation.
  *
  * Initial scope: v3, 512-byte sectors, header-only DIFAT (at most 109 FAT
  * sectors), cutoff 4096 or the existing cutoff-0 compatibility layout.
- * Resizing mini streams and transitions between mini/regular allocations are
- * explicitly unsupported. Same-length edits still use the existing validator.
+ * Mini streams may resize or move to/from regular allocations. Existing mini
+ * IDs and root bytes are retained when the root mini stream is extended.
+ * Same-length edits still use the existing validator.
  * Encrypted or overlapping allocations fail safely. Failure returns the exact
  * original input reference and a reason. No input buffer is mutated.
  *
@@ -127,8 +131,6 @@ export function resizeCompoundFileStream(
 		const validated = replaceCompoundFileStream(input, path, original);
 		if (validated === input) return fail('unsafe-edit');
 		const sameLength = replacement.length === original.length;
-		if (!sameLength && original.length < cutoff) return fail('unsupported-mini-stream');
-		if (!sameLength && replacement.length < cutoff) return fail('unsupported-mini-transition');
 
 		const sectorCount = input.length / SECTOR - 1, fatCount = read(0x2c);
 		if (sectorCount > fatCount * FAT_ENTRIES) return fail('unsafe-edit');
@@ -158,31 +160,18 @@ export function resizeCompoundFileStream(
 			const bytes = replaceCompoundFileStream(input, path, replacement);
 			return bytes === input ? fail('unsafe-edit') : { ok: true, bytes };
 		}
+		if (original.length < cutoff || replacement.length < cutoff) {
+			const bytes = resizeMiniCompoundStream(input, fat, fatIds, slots.get(0)!, target, replacement, cutoff);
+			return bytes ? { ok: true, bytes } : fail('allocation-limit');
+		}
 		const oldChain = follow(fat, target.start);
 		if (target.size !== original.length || oldChain.length !== Math.ceil(target.size / SECTOR)) return fail('unsafe-edit');
-		const payloadSectors = Math.ceil(replacement.length / SECTOR);
-		let newFatCount = fatCount;
-		while (sectorCount + payloadSectors + newFatCount - fatCount > newFatCount * FAT_ENTRIES) newFatCount++;
-		if (newFatCount > 109) return fail('allocation-limit');
-		const totalSectors = sectorCount + payloadSectors + newFatCount - fatCount;
-		const output = new Uint8Array((totalSectors + 1) * SECTOR);
-		output.set(input);
-		output.set(replacement, (sectorCount + 1) * SECTOR);
-		const outView = new DataView(output.buffer);
-		for (let i = fatCount; i < newFatCount; i++) {
-			const id = sectorCount + payloadSectors + i - fatCount;
-			fatIds.push(id);
-			output.fill(0xff, (id + 1) * SECTOR, (id + 2) * SECTOR);
-			outView.setUint32(0x4c + i * 4, id, true);
-		}
-		outView.setUint32(0x2c, newFatCount, true);
-		const writeFat = (id: number, value: number) => outView.setUint32((fatIds[Math.floor(id / FAT_ENTRIES)]! + 1) * SECTOR + (id % FAT_ENTRIES) * 4, value, true);
-		for (const id of oldChain) writeFat(id, FREE);
-		for (let i = 0; i < payloadSectors; i++) writeFat(sectorCount + i, i + 1 === payloadSectors ? END : sectorCount + i + 1);
-		for (const id of fatIds) writeFat(id, FAT);
-		outView.setUint32(target.offset + 116, payloadSectors ? sectorCount : END, true);
-		outView.setUint32(target.offset + 120, replacement.length, true);
-		return { ok: true, bytes: output };
+		const output = appendCompoundAllocations(input, fatIds, [replacement]);
+		if (!output) return fail('allocation-limit');
+		for (const id of oldChain) output.writeFat(id, FREE);
+		output.view.setUint32(target.offset + 116, output.chains[0]![0] ?? END, true);
+		output.view.setUint32(target.offset + 120, replacement.length, true);
+		return { ok: true, bytes: output.bytes };
 	} catch {
 		return fail('unsafe-edit');
 	}

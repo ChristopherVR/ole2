@@ -70,7 +70,14 @@ const resized = resizeCompoundFileStream(source, ['Target'], new Uint8Array(9000
 assert.equal(resized.ok, true);
 assert.equal(readCompoundFileStream(resized.bytes, ['Target']).length, 9000);
 assert.deepEqual([...readCompoundFileStream(resized.bytes, ['Unknown'])], [7,8,9]);
-const refused = resizeCompoundFileStream(source, ['Target'], new Uint8Array(3));
+const mini = resizeCompoundFileStream(source, ['Target'], new Uint8Array([1,2,3]));
+assert.equal(mini.ok, true);
+assert.deepEqual([...readCompoundFileStream(mini.bytes, ['Target'])], [1,2,3]);
+assert.deepEqual([...readCompoundFileStream(mini.bytes, ['Unknown'])], [7,8,9]);
+const miniGrowth = resizeCompoundFileStream(mini.bytes, ['Target'], new Uint8Array(4096).fill(4));
+assert.equal(miniGrowth.ok, true);
+assert.equal(readCompoundFileStream(miniGrowth.bytes, ['Target']).length, 4096);
+const refused = resizeCompoundFileStream(source, ['Target'], new Uint8Array(8 * 1024 * 1024));
 assert.equal(refused.ok, false);
 assert.equal(refused.bytes, source);
 for (const api of [readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, readRecord, editXlsNumericCell, editXlsStringCell, editPptSlideText, tryWriteOleDocParagraphEdit]) assert.equal(typeof api, 'function');

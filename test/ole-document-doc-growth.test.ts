@@ -73,15 +73,16 @@ describe('preserving DOC compound stream growth', () => {
 		}
 	});
 
-	it('refuses unsupported mini-stream growth without flattening the original container', () => {
+	it('refuses unsupported DIFAT container growth without flattening the original container', () => {
 		const doc = unwrapDocBytes(load())!;
-		const miniTable = doc.tableBytes.slice(0, 128);
+		const difatTable = new Uint8Array(8 * 1024 * 1024);
+		difatTable.set(doc.tableBytes);
 		const input = new Uint8Array(buildOle2(new Map([
-			['WordDocument', doc.wordDocBytes], [doc.tableStreamName, miniTable],
+			['WordDocument', doc.wordDocBytes], [doc.tableStreamName, difatTable],
 		])));
 		const parsed = unwrapDocBytes(input)!;
 		expect(parsed.canRewrite).toBe(false);
 		expect(() => parsed.rewrap(doc.wordDocBytes, new Uint8Array(5000))).toThrow(DocCfbRewriteError);
-		expect(readCompoundFileStream(input, [doc.tableStreamName])).toStrictEqual(miniTable);
+		expect(Buffer.from(readCompoundFileStream(input, [doc.tableStreamName])!).equals(Buffer.from(difatTable))).toBe(true);
 	});
 });

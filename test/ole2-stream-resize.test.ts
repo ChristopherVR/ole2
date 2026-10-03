@@ -123,8 +123,6 @@ describe('preserving regular CFB stream resize', () => {
 
 describe('explicit unsupported and malformed resize outcomes', () => {
 	it.each([
-		{ input: flat(), path: ['Target'], replacement: payload(4095), reason: 'unsupported-mini-transition' },
-		{ input: flat(), path: ['Unknown'], replacement: payload(99), reason: 'unsupported-mini-stream' },
 		{ input: flat(), path: ['Missing'], replacement: payload(9000), reason: 'invalid-or-missing-stream' },
 		{ input: flat(), path: ['Target'], replacement: payload(8 * 1024 * 1024), reason: 'allocation-limit' },
 	])('returns unchanged input for $reason', ({ input, path, replacement, reason }) => {

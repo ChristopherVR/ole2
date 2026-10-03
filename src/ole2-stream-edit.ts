@@ -228,7 +228,7 @@ function processCompoundFileStream(
 			if (entry.type !== 2 || entry.size === 0 || entry.size >= miniCutoff) continue;
 			const ids = exactChain(miniFat, entry.start, entry.size, miniSize);
 			for (const id of ids) {
-				if (id * miniSize >= rootMini.size || miniUsed.has(id)) return reject();
+				if ((id + 1) * miniSize > rootMini.size || miniUsed.has(id)) return reject();
 				miniUsed.add(id);
 			}
 		}
@@ -254,6 +254,8 @@ function processCompoundFileStream(
 			});
 			return result.slice(0, target.size);
 		}
+		// A validated empty stream has no payload allocation to overwrite.
+		if (replacement.length === 0) return input.slice();
 		const output = input.slice();
 		if (target.size >= miniCutoff) {
 			const sectors = exactChain(fat, target.start, target.size, sectorSize);
