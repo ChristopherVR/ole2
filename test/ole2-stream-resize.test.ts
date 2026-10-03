@@ -161,6 +161,20 @@ describe('explicit unsupported and malformed resize outcomes', () => {
 		expect(result.bytes).toBe(input);
 	});
 
+	it.each([5000, 9000])('refuses a directory stream shared by two storage parents for %i-byte edits', (size) => {
+		const input = nestedCfb([
+			{ path: ['Alpha', 'Target'], bytes: payload(5000) },
+			{ path: ['Beta', 'Other'], bytes: payload(5100) },
+		]);
+		const view = new DataView(input.buffer), directory = (view.getUint32(0x30, true) + 1) * 512;
+		// Beta's child is illegally changed to Alpha's Target directory slot.
+		view.setUint32(directory + 3 * 128 + 76, 2, true);
+		const before = input.slice(), result = resizeCompoundFileStream(input, ['Alpha', 'Target'], payload(size, 9));
+		expect(result).toEqual({ ok: false, bytes: input, reason: 'unsafe-edit' });
+		expect(result.bytes).toBe(input);
+		expect(input).toEqual(before);
+	});
+
 	it('rejects the actual encrypted XLS fixture', () => {
 		const input = new Uint8Array(readFileSync(new URL('./fixtures/xls/workbook-encrypted.xls', import.meta.url)));
 		const result = resizeCompoundFileStream(input, ['Workbook'], payload(30000));

@@ -55,6 +55,27 @@ function findSlot(slots: Map<number, Slot>, path: readonly string[]): Slot {
 	return parent;
 }
 
+function validateHierarchy(slots: Map<number, Slot>): void {
+	const owners = new Set<number>(), storages = [0];
+	while (storages.length) {
+		const storage = slots.get(storages.pop()!)!;
+		const stack = [storage.child], names = new Set<string>();
+		while (stack.length) {
+			const id = stack.pop()!;
+			if (id === FREE) continue;
+			const slot = slots.get(id);
+			if (!slot || (slot.type !== 1 && slot.type !== 2) || owners.has(id)) throw new Error('Ambiguous directory ownership');
+			const name = slot.name.toLocaleLowerCase();
+			if (names.has(name)) throw new Error('Duplicate sibling name');
+			names.add(name);
+			owners.add(id);
+			stack.push(slot.left, slot.right);
+			if (slot.type === 1) storages.push(id);
+		}
+	}
+	if (owners.size !== slots.size - 1) throw new Error('Unreachable directory entries');
+}
+
 /** Replace a regular stream, allowing its payload length to change. The path
  * includes every storage name relative to the root. Existing allocation and
  * directory bytes are retained; only target start/size, affected FAT entries
@@ -102,12 +123,9 @@ export function resizeCompoundFileStream(
 		// Reuse the existing global allocation-alias and encryption safety gate.
 		const validated = replaceCompoundFileStream(input, path, original);
 		if (validated === input) return fail('unsafe-edit');
-		if (replacement.length === original.length) {
-			const bytes = replaceCompoundFileStream(input, path, replacement);
-			return bytes === input ? fail('unsafe-edit') : { ok: true, bytes };
-		}
-		if (original.length < cutoff) return fail('unsupported-mini-stream');
-		if (replacement.length < cutoff) return fail('unsupported-mini-transition');
+		const sameLength = replacement.length === original.length;
+		if (!sameLength && original.length < cutoff) return fail('unsupported-mini-stream');
+		if (!sameLength && replacement.length < cutoff) return fail('unsupported-mini-transition');
 
 		const sectorCount = input.length / SECTOR - 1, fatCount = read(0x2c);
 		if (sectorCount > fatCount * FAT_ENTRIES) return fail('unsafe-edit');
@@ -131,7 +149,13 @@ export function resizeCompoundFileStream(
 			}
 		}
 		if ([...slots.values()].filter((slot) => slot.type === 5).length !== 1) return fail('unsafe-edit');
-		const target = findSlot(slots, path), oldChain = follow(fat, target.start);
+		const target = findSlot(slots, path);
+		validateHierarchy(slots);
+		if (sameLength) {
+			const bytes = replaceCompoundFileStream(input, path, replacement);
+			return bytes === input ? fail('unsafe-edit') : { ok: true, bytes };
+		}
+		const oldChain = follow(fat, target.start);
 		if (target.size !== original.length || oldChain.length !== Math.ceil(target.size / SECTOR)) return fail('unsafe-edit');
 		const payloadSectors = Math.ceil(replacement.length / SECTOR);
 		let newFatCount = fatCount;
