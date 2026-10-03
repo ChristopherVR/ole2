@@ -47,7 +47,7 @@
  */
 import { unwrapDocBytes } from './ole-document-doc-cfb.js';
 import { readDocFib, readFcLcbAt, patchDocFib } from './ole-document-doc-fib.js';
-import type { DocFib, FcLcb } from './ole-document-doc-fib.js';
+import type { ParsedDocFib, FcLcb } from './ole-document-doc-fib.js';
 import {
 	buildBteTableBytes,
 	buildSingleRunChpxPage,
@@ -74,7 +74,7 @@ const RISKY_STTB_INDICES = [21, 22, 23]; // bkmk sttb, bkf, bkl
 // revision-save IDs, and ignored theme/color mapping. None defines live CP ranges.
 const SAFE_EXTENDED_FC_LCB_INDICES = new Set([93, 94, 113, 181, 182]);
 
-function hasUnsupportedFeatures(wordDoc: Uint8Array, fib: DocFib): boolean {
+function hasUnsupportedFeatures(wordDoc: Uint8Array, fib: ParsedDocFib): boolean {
 	if (fib.ccpOtherStories > 0) return true;
 	// Effective versions can be extended even when FibBase.nFib remains Word97.
 	// Refuse every populated unknown extension, including factoid/repair bookmarks.

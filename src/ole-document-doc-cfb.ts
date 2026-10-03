@@ -25,13 +25,19 @@ export interface DocCfbUnwrap {
 	tableStreamName: '0Table' | '1Table';
 	tableBytes: Uint8Array;
 	/** The current flat writer cannot preserve nested storages or duplicate stream names. */
-	canRewrite: boolean;
+	canRewrite?: boolean;
 	/** Rebuild the full compound file with edited `WordDocument`/table stream bytes, preserving every other stream and the root CLSID. */
 	rewrap: (editedWordDocBytes: Uint8Array, editedTableBytes: Uint8Array) => Uint8Array;
 }
 
+/** Container capabilities known after parsing; callers can still construct the
+ * original public DocCfbUnwrap interface without the additive capability field. */
+export interface ParsedDocCfbUnwrap extends DocCfbUnwrap {
+	canRewrite: boolean;
+}
+
 /** Unwrap a `.doc` payload's CFB container. Returns `undefined` if it is not a readable `WordDocument` CFB payload. */
-export function unwrapDocBytes(bytes: Uint8Array): DocCfbUnwrap | undefined {
+export function unwrapDocBytes(bytes: Uint8Array): ParsedDocCfbUnwrap | undefined {
 	if (
 		bytes.length < 8 ||
 		bytes[0] !== 0xd0 ||

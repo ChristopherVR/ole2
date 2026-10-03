@@ -35,8 +35,8 @@ export interface FcLcb {
 /** Byte offsets and current values of every FIB field this module touches. */
 export interface DocFib {
 	/** Effective format version, including nFibNew when present. */
-	nFib: number;
-	nFibBase: number;
+	nFib?: number;
+	nFibBase?: number;
 	/** Byte offset of the `flags1` word (FibBase), for patching `fComplex`. */
 	flags1Offset: number;
 	flags1: number;
@@ -49,13 +49,22 @@ export interface DocFib {
 	ccpTextOffset: number;
 	ccpText: number;
 	/** Populated non-main stories require CP tables this editor cannot safely update. */
-	ccpOtherStories: number;
+	ccpOtherStories?: number;
 	plcfbteChpx: FcLcb;
 	plcfbtePapx: FcLcb;
 	sed: FcLcb;
 	clx: FcLcb;
 	/** Byte offset of the `FibRgFcLcb97` array, for locating each pair's own offset when patching. */
 	fibRgFcLcbOffset: number;
+	fibRgFcLcbCount?: number;
+}
+
+/** FIB values returned by the parser. Public DocFib additions remain optional
+ * so existing callers can construct the original interface for patch helpers. */
+export interface ParsedDocFib extends DocFib {
+	nFib: number;
+	nFibBase: number;
+	ccpOtherStories: number;
 	fibRgFcLcbCount: number;
 }
 
@@ -68,7 +77,7 @@ const F_COMPLEX_BIT = 1 << 2;
  * magic (0xA5EC): callers should already have gated on `WordDocument` stream
  * presence via `ole-payload-kind.ts` before calling this.
  */
-export function readDocFib(wordDoc: Uint8Array): DocFib {
+export function readDocFib(wordDoc: Uint8Array): ParsedDocFib {
 	const view = new DataView(wordDoc.buffer, wordDoc.byteOffset, wordDoc.byteLength);
 	const wIdent = view.getUint16(0x0, true);
 	if (wIdent !== 0xa5ec) {
@@ -146,9 +155,11 @@ function fcLcbFieldOffset(fib: DocFib, key: 'plcfbteChpx' | 'plcfbtePapx' | 'clx
  * fields/bookmarks" gate).
  */
 export function readFcLcbAt(wordDoc: Uint8Array, fib: DocFib, index: number): FcLcb {
-	if (!Number.isInteger(index) || index < 0 || index >= fib.fibRgFcLcbCount)
-		throw new Error('FIB fc/lcb index outside declared array');
 	const view = new DataView(wordDoc.buffer, wordDoc.byteOffset, wordDoc.byteLength);
+	const count = view.getUint16(fib.fibRgFcLcbOffset - 2, true);
+	if (!Number.isInteger(index) || index < 0 || index >= count ||
+		(fib.fibRgFcLcbCount !== undefined && fib.fibRgFcLcbCount !== count))
+		throw new Error('FIB fc/lcb index outside declared array');
 	const off = fib.fibRgFcLcbOffset + index * 8;
 	return { fc: view.getUint32(off, true), lcb: view.getUint32(off + 4, true) };
 }

@@ -72,4 +72,23 @@ console.log('Packed legacy OLE2 package works in an independent npm consumer.');
 `,
 );
 run(process.execPath, [join(directory, 'verify.mjs')], directory);
+// Compile an independent consumer constructing the original public interfaces.
+// Newly parsed metadata must remain additive for existing TypeScript callers.
+await writeFile(join(directory, 'verify-types.ts'), `
+import { readDocFib, readFcLcbAt, type DocFib, type DocCfbUnwrap } from '@christophervr/ole2';
+const fib: DocFib = {
+  flags1Offset: 10, flags1: 0, tableStreamName: '1Table', cbMacOffset: 64,
+  cbMac: 4096, ccpTextOffset: 76, ccpText: 0, plcfbteChpx: { fc: 0, lcb: 0 },
+  plcfbtePapx: { fc: 0, lcb: 0 }, sed: { fc: 0, lcb: 0 }, clx: { fc: 0, lcb: 0 },
+  fibRgFcLcbOffset: 154,
+};
+const container: DocCfbUnwrap = { wordDocBytes: new Uint8Array(), tableStreamName: '1Table',
+  tableBytes: new Uint8Array(), rewrap: bytes => bytes };
+const parsedVersion: number = readDocFib(container.wordDocBytes).nFib;
+readFcLcbAt(container.wordDocBytes, fib, 0);
+void parsedVersion;
+`);
+run(process.execPath, [join(process.cwd(), 'node_modules/typescript/bin/tsc'),
+  '--noEmit', '--strict', '--target', 'ES2022', '--module', 'NodeNext',
+  '--moduleResolution', 'NodeNext', join(directory, 'verify-types.ts')], directory);
 console.log(`Verified ${packed.filename}; isolated consumer: ${directory}`);
