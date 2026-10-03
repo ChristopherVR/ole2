@@ -54,14 +54,16 @@ export class PptSlide {
 export class PptDocument extends Ole2DocumentBase {
 	get kind(): 'ppt' { return 'ppt'; }
 	get capabilities(): typeof PPT_CAPABILITIES { return PPT_CAPABILITIES; }
-	readonly slides: readonly PptSlide[];
-	readonly unsupported: readonly string[];
+	readonly #slides: readonly PptSlide[];
+	readonly #unsupported: readonly string[];
+	get slides(): readonly PptSlide[] { return this.#slides; }
+	get unsupported(): readonly string[] { return this.#unsupported; }
 
 	constructor(input: Uint8Array) {
 		super(input);
 		const model = readPptSlideTexts(this.getBytes());
-		this.unsupported = Object.freeze([...model.unsupported, 'shape-to-text-references', 'variable-length-text']);
-		this.slides = Object.freeze(model.slides.map(slide => new PptSlide(slide.slideId, slide.persistId,
+		this.#unsupported = Object.freeze([...model.unsupported, 'shape-to-text-references', 'variable-length-text']);
+		this.#slides = Object.freeze(model.slides.map(slide => new PptSlide(slide.slideId, slide.persistId,
 			slide.texts.map((atom, textIndex) => new PptText({ slideId: slide.slideId, persistId: slide.persistId, textIndex }, atom,
 				(node, value) => this.#edit(node, value))))));
 	}

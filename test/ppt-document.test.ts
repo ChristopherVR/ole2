@@ -69,6 +69,8 @@ describe('PptDocument active text model', () => {
 		expect(doc.capabilities.limitations).toContain('notes');
 		expect(Reflect.set(doc, 'kind', 'xls')).toBe(false);
 		expect(Reflect.set(doc, 'capabilities', {})).toBe(false);
+		expect(Reflect.set(doc, 'slides', [])).toBe(false);
+		expect(Reflect.set(doc, 'unsupported', [])).toBe(false);
 		expect(Object.isFrozen(doc.capabilities)).toBe(true);
 		expect(Object.isFrozen(doc.capabilities.read)).toBe(true);
 		expect(Object.isFrozen(doc.capabilities.write)).toBe(true);
