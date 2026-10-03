@@ -1,5 +1,5 @@
 /** Active MS-PPT notes: explicit slide/notes persist linkage and fixed text slots.
- * [MS-PPT] 2.4.14.6-7, 2.5.6/8/9 and PT_NotesBody (0x0C). */
+ * [MS-PPT] 2.4.14.6-7, 2.5.6/10/12 and PT_NotesBody (0x0C). */
 import { readCompoundFileStream, replaceCompoundFileStream } from './ole2-stream-edit.js';
 import { readRecordOrThrow, type PptRecord } from './legacy-ppt-record-stream.js';
 import { RT, OA, HEADER_TOKEN_ENCRYPTED, HEADER_TOKEN_PLAIN } from './legacy-ppt-record-types.js';
