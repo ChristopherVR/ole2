@@ -1,0 +1,174 @@
+/** Active-slide text inspection and preservation-first, fixed-slot edits for MS-PPT. */
+import { readCompoundFileStream, replaceCompoundFileStream } from './ole2-stream-edit.js';
+import { PptParseError, readRecordOrThrow, type PptRecord } from './legacy-ppt-record-stream.js';
+import { RT, OA, HEADER_TOKEN_PLAIN, HEADER_TOKEN_ENCRYPTED } from './legacy-ppt-record-types.js';
+import { buildPersistDirectory } from './ppt/persist-directory.js';
+
+export class PptTextError extends PptParseError {
+	constructor(public readonly code: 'corrupt' | 'encrypted' | 'unsupported-version', message: string) {
+		super(message); this.name = 'PptTextError';
+	}
+}
+export interface PptTextAtom {
+	text: string;
+	/** Byte offset in the PowerPoint Document stream; diagnostic, not an edit identity. */
+	headerOffset: number;
+	encoding: 'utf16' | 'compressed-unicode';
+}
+export interface PptSlideText {
+	slideId: number;
+	persistId: number;
+	/** Outline text followed by inline shape text; no masters, notes or stale saves. */
+	texts: PptTextAtom[];
+}
+export interface PptTextDocument {
+	slides: PptSlideText[];
+	/** These elements are preserved, but are not decoded by this text API. */
+	unsupported: readonly string[];
+}
+
+const viewOf = (bytes: Uint8Array) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+function recordAt(view: DataView, offset: number, type?: number): PptRecord {
+	const rec = readRecordOrThrow(view, offset);
+	if (rec.dataOffset + rec.recLen > view.byteLength || (type !== undefined && rec.recType !== type))
+		throw new PptTextError('corrupt', `Invalid record at ${offset}`);
+	return rec;
+}
+function children(view: DataView, parent: PptRecord): PptRecord[] {
+	const result: PptRecord[] = [];
+	const end = parent.dataOffset + parent.recLen;
+	for (let pos = parent.dataOffset; pos < end;) {
+		if (end - pos < 8) throw new PptTextError('corrupt', 'Truncated child header');
+		const rec = recordAt(view, pos);
+		if (rec.dataOffset + rec.recLen > end) throw new PptTextError('corrupt', 'Child exceeds parent');
+		result.push(rec); pos = rec.dataOffset + rec.recLen;
+	}
+	return result;
+}
+function textAtom(view: DataView, rec: PptRecord): PptTextAtom | undefined {
+	if (rec.recType !== RT.TextCharsAtom && rec.recType !== RT.TextBytesAtom) return undefined;
+	if (rec.recVer !== 0 || rec.recInstance !== 0 || (rec.recType === RT.TextCharsAtom && rec.recLen % 2))
+		throw new PptTextError('corrupt', 'Invalid text atom');
+	const wide = rec.recType === RT.TextCharsAtom;
+	let text = '';
+	for (let pos = rec.dataOffset; pos < rec.dataOffset + rec.recLen; pos += wide ? 2 : 1) {
+		const value = wide ? view.getUint16(pos, true) : view.getUint8(pos);
+		if (value === 0) throw new PptTextError('corrupt', 'NUL in text atom');
+		// TextBytesAtom contains low UTF-16 bytes, NOT Windows-1252 ([MS-PPT] 2.9.43).
+		text += String.fromCharCode(value);
+	}
+	return { text, headerOffset: rec.headerOffset, encoding: wide ? 'utf16' : 'compressed-unicode' };
+}
+function inlineText(view: DataView, parent: PptRecord): PptTextAtom[] {
+	const result: PptTextAtom[] = [];
+	const stack = [{ parent, depth: 0 }];
+	while (stack.length) {
+		const current = stack.pop()!;
+		if (current.depth > 128) throw new PptTextError('corrupt', 'Record nesting exceeds limit');
+		const records = children(view, current.parent);
+		for (let i = records.length - 1; i >= 0; i--) {
+			const rec = records[i]!;
+			// ClientTextbox has atom framing but contains PPT records ([MS-ODRAW]).
+			if (rec.recVer === 15 || rec.recType === OA.ClientTextbox)
+				stack.push({ parent: rec, depth: current.depth + 1 });
+		}
+		for (const rec of records) {
+			const atom = textAtom(view, rec); if (atom) result.push(atom);
+		}
+	}
+	return result.sort((a, b) => a.headerOffset - b.headerOffset);
+}
+function inspect(input: Uint8Array): { model: PptTextDocument; stream: Uint8Array } {
+	const current = readCompoundFileStream(input, ['Current User']);
+	const stream = readCompoundFileStream(input, ['PowerPoint Document']);
+	if (!current || !stream) throw new PptTextError('corrupt', 'Missing or malformed PowerPoint streams');
+	const cv = viewOf(current), dv = viewOf(stream);
+	const cu = recordAt(cv, 0, RT.CurrentUserAtom), d = cu.dataOffset;
+	if (cu.recVer !== 0 || cu.recInstance !== 0 || cu.recLen < 24 || cv.getUint32(d, true) !== 20)
+		throw new PptTextError('corrupt', 'Invalid CurrentUserAtom');
+	const nameLength = cv.getUint16(d + 12, true);
+	if (nameLength > 255 || 24 + nameLength > cu.recLen)
+		throw new PptTextError('corrupt', 'Invalid CurrentUserAtom username bounds');
+	const token = cv.getUint32(d + 4, true);
+	if (token === HEADER_TOKEN_ENCRYPTED) throw new PptTextError('encrypted', 'Encrypted PPT text is unsupported');
+	if (token !== HEADER_TOKEN_PLAIN) throw new PptTextError('corrupt', 'Unknown encryption token');
+	if (cv.getUint16(d + 14, true) !== 0x3f4 || cv.getUint8(d + 16) !== 3 || cv.getUint8(d + 17) !== 0)
+		throw new PptTextError('unsupported-version', 'Expected PowerPoint 97-2003 storage');
+	const { currentEdit, directory } = buildPersistDirectory(dv, cv.getUint32(d + 8, true));
+	if (currentEdit.encryptSessionPersistIdRef !== undefined)
+		throw new PptTextError('encrypted', 'Encrypted persist objects are unsupported');
+	const docOffset = directory.get(currentEdit.docPersistIdRef);
+	if (docOffset === undefined) throw new PptTextError('corrupt', 'Missing active document');
+	const doc = recordAt(dv, docOffset, RT.Document);
+	if (doc.recVer !== 15) throw new PptTextError('corrupt', 'Invalid document container');
+	const slides: PptSlideText[] = [];
+	for (const list of children(dv, doc)) {
+		if (list.recType !== RT.SlideListWithText || list.recInstance !== 0) continue;
+		if (list.recVer !== 15) throw new PptTextError('corrupt', 'Invalid slide list');
+		let slide: PptSlideText | undefined;
+		for (const rec of children(dv, list)) {
+			if (rec.recType === RT.SlidePersistAtom) {
+				if (rec.recLen !== 20) throw new PptTextError('corrupt', 'Invalid slide persist atom');
+				const persistId = dv.getUint32(rec.dataOffset, true);
+				slide = { persistId, slideId: dv.getUint32(rec.dataOffset + 12, true), texts: [] };
+				slides.push(slide);
+			} else {
+				const atom = textAtom(dv, rec);
+				if (atom) { if (!slide) throw new PptTextError('corrupt', 'Unowned outline text'); slide.texts.push(atom); }
+			}
+		}
+	}
+	for (const slide of slides) {
+		const offset = directory.get(slide.persistId);
+		if (offset === undefined) throw new PptTextError('corrupt', 'Missing active slide');
+		const rec = recordAt(dv, offset, RT.Slide);
+		if (rec.recVer !== 15) throw new PptTextError('corrupt', 'Invalid slide container');
+		slide.texts.push(...inlineText(dv, rec));
+	}
+	return { stream, model: { slides, unsupported: ['formatting', 'geometry', 'pictures', 'masters', 'notes', 'animations', 'embedded-objects'] } };
+}
+/** Inspect active slide text without evaluating links, macros or embedded objects. */
+export function readPptSlideTexts(input: Uint8Array): PptTextDocument {
+	try { return inspect(input).model; }
+	catch (error) {
+		if (error instanceof PptTextError) throw error;
+		throw new PptTextError('corrupt', error instanceof Error ? error.message : 'Malformed PPT');
+	}
+}
+export type PptTextEditResult =
+	| { status: 'edited' | 'unchanged'; bytes: Uint8Array }
+	| { status: 'unsupported'; bytes: Uint8Array; reason: string };
+/** Replace an existing active text atom in its fixed character slots. All CFB bytes
+ * outside its payload remain unchanged, including unknown records and streams.
+ * Styles and hyperlink ranges stay at their original character offsets. */
+export function editPptSlideText(input: Uint8Array, edit: {
+	slideIndex: number; textIndex: number; expectedText: string; text: string;
+}): PptTextEditResult {
+	const reject = (reason: string): PptTextEditResult => ({ status: 'unsupported', bytes: input, reason });
+	try {
+		if (!Number.isSafeInteger(edit.slideIndex) || !Number.isSafeInteger(edit.textIndex) || edit.slideIndex < 0 || edit.textIndex < 0)
+			return reject('Invalid text location');
+		const { stream, model } = inspect(input);
+		const atom = model.slides[edit.slideIndex]?.texts[edit.textIndex];
+		if (!atom || atom.text !== edit.expectedText) return reject('Text location or expected text does not match');
+		if (edit.text === atom.text) return { status: 'unchanged', bytes: input };
+		if (edit.text.length !== atom.text.length) return reject('Replacement must keep the UTF-16 character count');
+		for (let i = 0; i < edit.text.length; i++) {
+			const old = atom.text.charCodeAt(i), value = edit.text.charCodeAt(i);
+			if (value === 0 || ((old < 32 || value < 32 || old === 42 || value === 42) && old !== value))
+				return reject('Control characters and field markers must stay at the same offsets');
+			if (atom.encoding === 'compressed-unicode' && value > 255) return reject('Character does not fit the existing encoding');
+			if (value >= 0xd800 && value <= 0xdbff && !(edit.text.charCodeAt(i + 1) >= 0xdc00 && edit.text.charCodeAt(i + 1) <= 0xdfff))
+				return reject('Unpaired UTF-16 surrogate');
+			if (value >= 0xdc00 && value <= 0xdfff && !(edit.text.charCodeAt(i - 1) >= 0xd800 && edit.text.charCodeAt(i - 1) <= 0xdbff))
+				return reject('Unpaired UTF-16 surrogate');
+		}
+		const output = stream.slice(), view = viewOf(output), start = atom.headerOffset + 8;
+		for (let i = 0; i < edit.text.length; i++) {
+			if (atom.encoding === 'utf16') view.setUint16(start + i * 2, edit.text.charCodeAt(i), true);
+			else output[start + i] = edit.text.charCodeAt(i);
+		}
+		const bytes = replaceCompoundFileStream(input, ['PowerPoint Document'], output);
+		return bytes === input ? reject('Compound stream cannot be safely replaced') : { status: 'edited', bytes };
+	} catch (error) { return reject(error instanceof Error ? error.message : 'Malformed PPT'); }
+}

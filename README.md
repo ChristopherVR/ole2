@@ -23,7 +23,7 @@ npm install @christophervr/ole2
 - MS-CFB/OLE2 compound-file stream reading and writing, including mini streams, FAT/DIFAT and directory metadata.
 - Word 97-2003 binary `.doc` main-body text reading and guarded existing-paragraph text editing.
 - Excel BIFF8 `.xls` workbook reading (`readXlsWorkbook`: every sheet, cell values, cached formula results and decoded formula text, styles, merges, column and row sizes, views, comments, hyperlinks, defined names), plus first-worksheet previews and bounded numeric/string cell edits.
-- PowerPoint `.ppt` binary export from a framework-neutral model, including text, shapes, pictures, notes, embedded objects and optional RC4 encryption, plus record headers, traversal and constants.
+- PowerPoint 97-2003 `.ppt` active-slide text reading and fixed-length text edits that preserve surrounding bytes, plus binary export from a framework-neutral model (text, shapes, pictures, notes, embedded objects and optional RC4 encryption).
 - Visio and Publisher binary structure inspection, plus standard OLE document-property reading and bounded text-property edits. Drawing and publication page content is not yet decoded or editable.
 - Path-based compound stream edits preserve nested storage layout and all bytes outside the edited stream.
 - No browser or framework dependency; typed-array/ArrayBuffer inputs and ESM JavaScript with TypeScript declarations.
@@ -69,6 +69,22 @@ if (edited === fileBytes) console.log("Unchanged or unsupported edit.");
 ```
 
 ## Legacy PowerPoint export
+
+`readPptSlideTexts(bytes)` follows the active user-edit/persist directory rather than scanning stale saves. It returns slide ids and outline/inline text atoms. It does not decode formatting, layout, masters, notes, pictures or animations into an editable presentation model. Encrypted input is rejected with `PptTextError.code === 'encrypted'`.
+
+```js
+import { readPptSlideTexts, editPptSlideText } from '@christophervr/ole2';
+
+const atom = readPptSlideTexts(pptBytes).slides[0].texts[0];
+const result = editPptSlideText(pptBytes, {
+  slideIndex: 0, textIndex: 0,
+  expectedText: atom.text, text: replacement,
+});
+if (result.status === 'edited') save(result.bytes);
+else if (result.status === 'unsupported') console.log(result.reason);
+```
+
+The replacement must fit the existing encoding and keep its UTF-16 character count. Paragraph/control characters and field markers must remain at the same offsets. Existing formatting and hyperlink ranges retain their original character positions. Only the selected text payload changes; unknown records, nested streams, images and save history remain byte-for-byte intact. This constrained edit is separate from creating a new deck with `buildPptFile`, and is not a general presentation roundtrip.
 
 ```js
 import { buildPptFile } from "@christophervr/ole2/legacy-ppt-writer";
