@@ -83,11 +83,30 @@ pwsh -STA -NoProfile -File scripts/native-cfb-snapshot.ps1 -InputPath supplied.c
 ```
 
 The oracle fails explicitly on enumeration/read errors, truncation, unexpected
-element types, depth over32, or configurable limits: 8,192 entries, 64MiB per
-stream and 128MiB total. It reads bounded chunks rather than allocating declared
+element types, depth over 32, or configurable limits: 8,192 entries, 64 MiB per
+stream and 128 MiB total. It reads bounded chunks rather than allocating declared
 stream sizes. Compare against independently supplied generator manifests and
 expected changes with the existing snapshot comparator. This is native container
 evidence only; it says nothing about Office models or rendering. The v4 corpus
-check covers43 metadata entries and41 hashed streams, including a stream beyond
-the first32 directory slots and a mini-stream. Dedicated checks exercised entry,
+check covers 43 metadata entries and 41 hashed streams, including a stream beyond
+the first 32 directory slots and a mini-stream. Dedicated checks exercised entry,
 per-stream and total-byte rejection plus an invalid eight-byte input header.
+
+## Typed document model vertical slices
+
+After building the unified typed factory and adapters, run:
+
+```powershell
+node scripts/prepare-native-model-edits.mjs .native-validation dist
+```
+
+The driver uses only `parsePpt`, `parseDoc`, `parseXls`, supported model setters and
+`serialize()`. Owned fixtures cover two fixed-length ASCII/Greek PPT title edits,
+DOC paragraph growth outside an unchanged literal main-story field, and Unicode
+string conversion of a middle MULRK cell with distinct neighboring XF entries.
+It records exact source/output hashes and dirty/revision state; generation alone
+is explicitly not native evidence. XLS also records `recalculationRequired`.
+Use the native snapshot script to compare generated files against their original
+fixture baselines with explicit declared text/value changes. Field locations
+should be captured for the DOC case. These are captured semantic checks; neither
+the driver nor successful serialization claims rendered or full-format fidelity.
