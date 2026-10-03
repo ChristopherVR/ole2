@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 // Generate only an owned neutral fixture edit. This does not launch Office;
 // native snapshots and save/reopen comparisons are a separate evidence gate.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const modulePath = resolve(process.argv[2] ?? join(root, 'dist/index.js'));
+if (!process.argv[2]) throw new Error('Historical 0.10.0 World gate: supply an explicit trusted built 0.10.0 dist/index.js. Use prepare-native-vsd-text-safety-edits.mjs for current exact-length writing.');
+const modulePath = resolve(process.argv[2]);
 const output = resolve(process.argv[3] ?? join(root, '.native-validation/vsd-text'));
 const { parseVsd } = await import(pathToFileURL(modulePath).href);
 const sourcePath = join(root, 'test/fixtures/vsd/native-visio16-v11.vsd');

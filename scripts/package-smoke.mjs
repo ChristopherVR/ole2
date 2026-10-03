@@ -56,11 +56,13 @@ await writeFile(join(directory, 'fixture-alignment.doc'), await readFile(new URL
 await writeFile(join(directory, 'fixture.ppt'), await readFile(new URL('../test/fixtures/ppt/native-text.ppt', import.meta.url)));
 await writeFile(join(directory, 'fixture.vsd'), await readFile(new URL('../test/fixtures/vsd/owned-v11.vsd', import.meta.url)));
 await writeFile(join(directory, 'fixture-native.vsd'), await readFile(new URL('../test/fixtures/vsd/native-visio16-v11.vsd', import.meta.url)));
+await writeFile(join(directory, 'fixture-literal.vsd'), await readFile(new URL('../test/fixtures/vsd/native-literal-transform.vsd', import.meta.url)));
 await writeFile(
 	join(directory, 'verify.mjs'),
 	`
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { parseDoc, parseXls, parsePpt, parseVsd, parseCompoundFile, Ole2DocumentError } from '@christophervr/ole2';
 const sizedDoc = parseDoc(readFileSync(new URL('./fixture-size.doc', import.meta.url)));
 const sizedRun = sizedDoc.paragraphs.flatMap(p => p.runs ?? []).find(r => r.directFontSizePoints === 18);
@@ -157,6 +159,7 @@ assert.equal(nativeVsd.dirty, false);
 assert.equal(nativeVsd.revision, 0);
 nativeShape.text = 'World\\n\\n';
 const nativeSaved = nativeVsd.serialize();
+assert.equal(createHash('sha256').update(nativeSaved).digest('hex'), '1d8d6d2c214490d4676adc758e4b1e8a0d383449d2cdb146e9bec47c829050bc');
 assert.equal(parseVsd(nativeSaved).pages[0].shapes.find(s => s.id === 1).text, 'World\\n\\n');
 assert.equal(nativeSaved.length, nativeBytes.length);
 const nativeBeforeStream = readCompoundFileStream(nativeBytes, ['VisioDocument']);
@@ -165,6 +168,17 @@ assert.equal(nativeAfterStream.length, nativeBeforeStream.length);
 assert.deepEqual(nativeAfterStream.subarray(0, 54), nativeBeforeStream.subarray(0, 54));
 assert.equal(nativeVsd.dirty, true);
 assert.equal(nativeVsd.revision, 1);
+const literalBytes = new Uint8Array(readFileSync(new URL('./fixture-literal.vsd', import.meta.url)));
+const literalVsd = parseVsd(literalBytes), literalShape = literalVsd.pages[0].shapes.find(s => s.id === 1);
+literalShape.text = 'Jello\\n\\n';
+const literalSaved = literalVsd.serialize();
+assert.equal(createHash('sha256').update(literalSaved).digest('hex'), '7cbe62c046c62662dda6edb17dc56828b3eb575060ff9868952b083dce52c832');
+assert.equal(parseVsd(literalSaved).pages[0].shapes.find(s => s.id === 1).text, 'Jello\\n\\n');
+assert.equal(literalSaved.length, literalBytes.length);
+assert.equal(literalVsd.revision, 1);
+assert.throws(() => { literalShape.text = 'Too long\\n\\n'; });
+assert.deepEqual(literalVsd.serialize(), literalSaved);
+assert.equal(literalVsd.revision, 1);
 assert.throws(() => { nativeShape.text = 'Too long\\n\\n'; });
 assert.deepEqual(nativeVsd.serialize(), nativeSaved);
 assert.equal(nativeVsd.revision, 1);

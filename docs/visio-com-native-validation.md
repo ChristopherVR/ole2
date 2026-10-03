@@ -1,6 +1,30 @@
 # Native Visio COM gate, 2026-10-03
 
-## Bounded text writing in 0.10.0
+## Exact decoded-length text safety in 0.10.1
+
+An additional native-generated fixture exposed an admitted 0.10.0 text edit
+that Visio rejected: `Hello\n\n` to `Jello\n\n`. The old encoded-fit strategy
+could add decoded zero suffix bytes. 0.10.1 preserves both the original encoded
+allocation and exact decoded block length, using bounded token variations.
+Edits without a safe exact fit refuse atomically.
+
+Five production text cases pass fresh Visio open, native save and reopen, with
+only the captured target text changed. This includes Jello/World/Again/Hallo in
+the new literal fixture and World in the original three-shape fixture. The
+new Jello artifact SHA256 is
+`7cbe62c046c62662dda6edb17dc56828b3eb575060ff9868952b083dce52c832`;
+the original fixture's current World artifact is
+`1d8d6d2c214490d4676adc758e4b1e8a0d383449d2cdb146e9bec47c829050bc`.
+No-op bytes are exact; repeated model edits reproduce the natively tested Again
+artifact. Run `node scripts/prepare-native-vsd-text-safety-edits.mjs` after
+building to reproduce candidates and record module/artifact hashes. Generation
+does not itself validate Visio. See the full
+[native evidence and limits](../test/fixtures/NATIVE-VALIDATION.md).
+
+Native transform editing, rendering, nonempty masters/layers and general
+ShapeSheet evaluation remain unverified or unsupported.
+
+## Historical bounded text writing in 0.10.0
 
 The production text writer now compresses eligible edits into the original leaf
 allocation, preserving all page/table offsets. The owned native fixture's
@@ -11,8 +35,9 @@ from `Hello\n` to `World\n` and all other captured fields stay unchanged.
 This is positive evidence for that text case. Native transform editing and
 rendering remain separate unverified work.
 
-After building, `node scripts/prepare-native-vsd-text-edits.mjs` reproduces the
-exact output and records module hashes. Run `native-visio-snapshot.ps1` against
+With an explicit trusted 0.10.0 built module,
+`node scripts/prepare-native-vsd-text-edits.mjs C:/trusted-ole2-0.10.0/dist/index.js`
+reproduces the historical output and records module hashes. Run `native-visio-snapshot.ps1` against
 the original and output, using an explicit target-text delta; the generation
 driver itself does not launch or validate Visio. Capacity, field, overlap and
 resource-budget refusals preserve bytes and state.

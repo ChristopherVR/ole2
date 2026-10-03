@@ -83,10 +83,12 @@ its byte-exact no-op serialization. Its own save/reopen preserved all captured
 fields. The released 0.9.0 VSD text writer returned a corrupt file after an
 equal-length `Hello\n\n` to `World\n\n` edit: relocating the page block was
 rejected by Visio even though the CFB container and parser self-roundtrip passed.
-The 0.9.1 containment refused that edit. The writer now uses bounded compression
-to fit eligible edits into the original allocation without relocating any page
-or ancestor block. The native `World\n\n` output opens and survives native
-save/reopen, with only the captured target text changed. Insufficient capacity,
+The 0.9.1 containment refused that edit. The 0.10 encoded-fit writer admitted
+World, but a later Jello edit in another native fixture was rejected by Visio.
+The writer now preserves exact decoded block length as well as original encoded
+allocation, using bounded token variations without added decoded bytes or page
+and ancestor relocation. Five production text cases open and survive native
+save/reopen, with only captured target text changed. Insufficient capacity,
 shared blocks and compression budgets still refuse without changing bytes,
 dirty state or revision. This establishes the tested text case, not native
 acceptance for every admitted write. The authored

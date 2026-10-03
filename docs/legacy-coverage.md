@@ -76,6 +76,13 @@ and its native save/reopen, with only the captured target text changed. The
 [the native Visio gate](visio-com-native-validation.md). These cases establish
 the declared fields, not rendering, pagination or complete format fidelity.
 
+An additional native fixture exposed an admitted Jello text edit rejected by
+Visio in 0.10.0. The 0.10.1 writer preserves exact decoded block length as well
+as encoded allocation, without adding decoded padding. Five production text
+cases pass native open/save/reopen; edits without a bounded exact fit refuse.
+PPT slide/outline text and geometry writes also refuse overlapping live persist
+objects and save-history metadata. No-op edits retain bytes and clean state.
+
 ## Next engineering priorities
 
 1. Grow a reproducible, licensed corpus with independent consumers, including

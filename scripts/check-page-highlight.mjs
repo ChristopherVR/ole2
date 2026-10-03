@@ -36,7 +36,8 @@ try {
 	assert.match(visio, /TrailerStream pointer/);
 	assert.match(visio, /parseVsd/);
 	assert.match(visio, /Version 11 only/);
-	assert.match(visio, /production bounded World text edit/);
+	assert.match(visio, /five production exact-length text cases/);
+	assert.match(visio, /preserves exact decoded length with no added bytes/);
 	assert.match(visio, /Native transform, rendering and complete roundtrip parity remain unverified/);
 	assert.match(visio, /data-language="typescript"/);
 	assert.doesNotMatch(visio, /\{\{[^}]+\}\}/);

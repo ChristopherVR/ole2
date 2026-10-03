@@ -183,14 +183,14 @@ export const apiPages = [
         "body": "Supported setters replace edited leaves at their original offsets and stored allocation sizes, retaining pointer ancestors, unknown records and other CFB streams.",
         "bullets": [
           "Text retains UTF-16 length and control positions; fields, shared or overlapping allocations refuse.",
-          "Bounded compression fits at most 8 MiB decoded leaf/allocation with up to 4096 zero suffix bytes; insufficient capacity or search budgets refuse atomically.",
+          "Bounded compression preserves exact decoded length with no added bytes, at most 8 MiB decoded leaf/allocation and bounded token-fit search; insufficient capacity or budgets refuse atomically.",
           "Transform writes require an exclusive top-level literal transform with understood unit tags and no parent/master dependency.",
           "Literal path points are not automatically scaled or recalculated when transform dimensions change."
         ]
       },
       {
         "title": "Evidence and limitations",
-        "body": "Native Visio 16 accepts the owned native baseline, production bounded World text edit and native save/reopen with only captured target text changed. The older handcrafted fixture is rejected by Visio despite libvisio acceptance.",
+        "body": "Native Visio 16 accepts five production exact-length text cases and native save/reopen with only captured target text changed. A newly rejected 0.10 Jello edit exposed unsafe decoded padding; the older handcrafted fixture is also rejected despite libvisio acceptance.",
         "bullets": [
           "Earlier binary versions, general ShapeSheet evaluation, styles, rich text, embedded content and general drawing reconstruction remain unsupported.",
           "inspectLegacyVisio still validates the signature/version/TrailerStream pointer for compatible inspection layouts; inspection is separate from drawing decoding.",
