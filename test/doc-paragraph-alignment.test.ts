@@ -173,9 +173,14 @@ describe('direct logical PAPX paragraph alignment', () => {
 		wordView.setUint32(fib.fibRgFcLcbOffset + 13 * 8, cfb.tableBytes.length, true);
 		wordView.setUint32(fib.fibRgFcLcbOffset + 13 * 8 + 4, bte.length, true);
 		const input = cfb.rewrap(word, table), doc = parseDoc(input);
-		expect(() => readDocParagraphAlignments(input)).toThrow('resource-limit');
-		expect(() => { doc.paragraphs[1]!.directAlignment = 'justify'; }).toThrow(UnsupportedOle2EditError);
-		expect(doc.serialize()).toStrictEqual(input);
+		let failure: unknown;
+		try { doc.paragraphs[1]!.directAlignment = 'justify'; }
+		catch (error) { failure = error; }
+		expect(failure).toBeInstanceOf(UnsupportedOle2EditError);
+		expect(failure).toMatchObject({ reason: 'resource-limit' });
+		// Native byte comparison keeps this large corruption test deterministic
+		// under concurrent suites without traversing millions of JS properties.
+		expect(Buffer.compare(doc.serialize(), input)).toBe(0);
 		expect(doc.dirty).toBe(false);
 	});
 
