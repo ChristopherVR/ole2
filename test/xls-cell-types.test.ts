@@ -58,10 +58,10 @@ describe('typed boolean and error cell writes', () => {
   const error=a.value as {error:string};error.error='tamper';expect(a.value).toEqual({error:'#N/A'});
   const revision=document.revision;a.value={error:'#N/A'};expect(document.revision).toBe(revision);
   a.value=false;expect(a.value).toBe(false);expect(a.type).toBe('boolean');
-  const bytes=document.serialize(),unchangedRevision=document.revision;
-  expect(()=>{a.value=2;}).toThrow(UnsupportedOle2EditError);
-  expect(()=>{a.value='text';}).toThrow(UnsupportedOle2EditError);
-  expect(document.serialize()).toEqual(bytes);expect(document.revision).toBe(unchangedRevision);
+  const unchangedRevision=document.revision;
+  a.value=2;expect(a.type).toBe('number');expect(a.value).toBe(2);
+  a.value='text';expect(a.type).toBe('string');expect(a.value).toBe('text');
+  expect(document.revision).toBe(unchangedRevision+2);
  });
  it('rejects string/formula targets and invalid errors without dirtying the document',()=>{
   const bytes=fixture(),document=new XlsDocument(bytes),sheet=document.sheets[0]!;

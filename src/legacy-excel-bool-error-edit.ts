@@ -17,6 +17,10 @@ const ERRORS: Readonly<Record<XlsErrorCode, number>> = Object.freeze({
  '#NAME?': 29, '#NUM!': 36, '#N/A': 42, '#GETTING_DATA': 43,
 });
 export type XlsBoolErrorValue = boolean | XlsError;
+/** MS-XLS Bes: discriminate only defined boolean bytes or native error codes. */
+export function isValidXlsBoolErrorRecordValue(flag: number, value: number): boolean {
+ return (flag === 0 && (value === 0 || value === 1)) || (flag === 1 && Object.values(ERRORS).includes(value));
+}
 /** Capture accessor-backed inputs once; later serialization uses plain data. */
 export function normalizeXlsErrorValue(value: unknown): XlsError | undefined {
  try {
@@ -45,7 +49,7 @@ export function editXlsBoolErrorWorkbookStream(input: Uint8Array, edit: Edit): X
   const source = new DataView(input.buffer, input.byteOffset, input.byteLength);
   if (target.opcode === 0x0205) {
    const flag = source.getUint8(target.dataOffset + 7), value = source.getUint8(target.dataOffset + 6);
-   if (flag > 1 || (flag === 0 ? value > 1 : !Object.values(ERRORS).includes(value))) reject('malformed-records');
+   if (!isValidXlsBoolErrorRecordValue(flag, value)) reject('malformed-records');
   }
   const data = new Uint8Array(12), view = new DataView(data.buffer);
   view.setUint16(0, 0x0205, true); view.setUint16(2, 8, true);
