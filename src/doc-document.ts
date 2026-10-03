@@ -51,6 +51,7 @@ const DOC_CAPABILITIES = Object.freeze({
 		'Text uses the bounded DOC codec defaults: 16,777,216 main-story characters and 65,536 pieces or field records.',
 		'Rich formatting is bounded to 65,536 physical/mapped runs and paragraph style records.',
 		'Logical paragraph alignment replaces a sole existing exclusive sprmPJc slot. Matching legacy mirrors support center/justify only, with both slots updated. Styles, legacy-only alignment, tables and opaque formatting refuse.',
+		'Paragraph alignment inspection is bounded to 262,144 SPRM records before allocation, including shared or stale formatting runs.',
 	]),
 });
 

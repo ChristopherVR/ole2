@@ -38,7 +38,8 @@ other-story piece aliases, text and CHPX overlap, FIB-prefix overlap and section
 exception overlap. Tables, fields/control characters in the target, external
 huge PAPX and opaque/reset/style modifiers refuse. Default text/piece budgets
 apply; paragraph formatting is bounded to 65,536 pages, physical runs and
-paragraph records. Invalid values are rejected without object coercion.
+paragraph records, and 262,144 SPRM records before allocation. Invalid values
+are rejected without object coercion.
 
 Paragraph handles read current bytes after text, run or alignment edits. A
 successful edit increments the document revision and invalidates old character

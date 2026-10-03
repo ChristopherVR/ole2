@@ -8,6 +8,7 @@ import { DEFAULT_OLE_DOC_PROCESSING_LIMITS } from './ole-document-doc-editor.js'
 import type { DocParagraphAlignment } from './doc-document.js';
 
 const LIMIT = 65_536;
+const SPRM_LIMIT = 262_144;
 const ALIGNMENTS: readonly DocParagraphAlignment[] = ['start', 'center', 'end', 'justify'];
 // No reset, style-change, table or huge-PAPX semantics. Legacy physical alignment
 // is understood only as a unique preceding matching compatibility mirror.
@@ -25,7 +26,7 @@ function alignmentOperands(row: Row) {
 	return { value, mirror };
 }
 
-function parsePrls(word: Uint8Array, start: number, end: number): Prl[] {
+function parsePrls(word: Uint8Array, start: number, end: number, budget: { remaining: number }): Prl[] {
 	const view = new DataView(word.buffer, word.byteOffset, word.byteLength), out: Prl[] = [];
 	for (let at = start; at < end;) {
 		if (at + 2 > end) throw new Error('invalid-formatting');
@@ -36,6 +37,8 @@ function parsePrls(word: Uint8Array, start: number, end: number): Prl[] {
 			length = 1 + word[at + 2]!;
 		}
 		if (at + 2 + length > end) throw new Error('invalid-formatting');
+		if (budget.remaining === 0) throw new Error('resource-limit');
+		budget.remaining--;
 		out.push({ opcode, at: at + 2, operand: word.subarray(at + 2, at + 2 + length) });
 		at += 2 + length;
 	}
@@ -54,6 +57,7 @@ function inspect(input: Uint8Array) {
 	if (fib.plcfbtePapx.lcb > LIMIT * 8 + 4 || fib.plcfbteChpx.lcb > LIMIT * 8 + 4) throw new Error('resource-limit');
 	const papx = parseBteTable(doc.tableBytes, fib.plcfbtePapx), chpx = parseBteTable(doc.tableBytes, fib.plcfbteChpx);
 	const view = new DataView(word.buffer, word.byteOffset, word.byteLength), rows: Row[] = [];
+	const sprmBudget = { remaining: SPRM_LIMIT };
 	for (let pageIndex = 0; pageIndex < papx.pns.length; pageIndex++) {
 		const page = papx.pns[pageIndex]! * 512;
 		if (page > word.length - 512) throw new Error('invalid-formatting');
@@ -69,7 +73,7 @@ function inspect(input: Uint8Array) {
 			const length = cb === 0 ? 2 + word[blob + 1]! * 2 : cb * 2;
 			if ((cb === 0 && !word[blob + 1]) || length < prefix + 2 || offset + length > 511) throw new Error('invalid-formatting');
 			const blobEnd = blob + length;
-			rows.push({ start, end, blob, blobEnd, prls: parsePrls(word, blob + prefix + 2, blobEnd) });
+			rows.push({ start, end, blob, blobEnd, prls: parsePrls(word, blob + prefix + 2, blobEnd, sprmBudget) });
 		}
 	}
 	rows.sort((a, b) => a.start - b.start);

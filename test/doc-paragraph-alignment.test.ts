@@ -5,7 +5,7 @@ import type { DocParagraph } from '../src/doc-document.js';
 import { UnsupportedOle2EditError } from '../src/ole2-document-base.js';
 import { unwrapDocBytes } from '../src/ole-document-doc-cfb.js';
 import { readDocFib } from '../src/ole-document-doc-fib.js';
-import { parseBteTable } from '../src/ole-document-doc-fkp.js';
+import { parseBteTable, buildBteTableBytes } from '../src/ole-document-doc-fkp.js';
 import { buildClxBytes, parseDocClx } from '../src/ole-document-doc-pieces.js';
 import { readDocParagraphAlignments, writeDocParagraphAlignment } from '../src/ole-document-doc-paragraph-format.js';
 
@@ -151,5 +151,31 @@ describe('direct logical PAPX paragraph alignment', () => {
 			expect(doc.serialize()).toStrictEqual(input);
 			expect(doc.dirty).toBe(false);
 		}
+	});
+
+	it('bounds aggregate SPRM allocation even when page and physical-run counts are below their limits', () => {
+		const { cfb, fib, papx } = layout(), pageStart = Math.ceil(cfb.wordDocBytes.length / 512), count = 3_000;
+		const word = new Uint8Array((pageStart + count) * 512);
+		word.set(cfb.wordDocBytes);
+		const wordView = new DataView(word.buffer), firstFc = papx.fcs.at(-1)!;
+		for (let i = 0; i < count; i++) {
+			const page = (pageStart + i) * 512;
+			wordView.setInt32(page, firstFc + i, true);
+			wordView.setInt32(page + 4, firstFc + i + 1, true);
+			word[page + 8] = 11; // One PAPX blob at byte22, past the21-byte header.
+			word[page + 22] = 0; word[page + 23] = 151; // istd2 +100three-byte SPRMs.
+			for (let j = 0; j < 100; j++) word.set([5, 0x24, 0], page + 26 + j * 3);
+			word[page + 511] = 1;
+			papx.fcs.push(firstFc + i + 1); papx.pns.push(pageStart + i);
+		}
+		const bte = buildBteTableBytes(papx), table = new Uint8Array(cfb.tableBytes.length + bte.length);
+		table.set(cfb.tableBytes); table.set(bte, cfb.tableBytes.length);
+		wordView.setUint32(fib.fibRgFcLcbOffset + 13 * 8, cfb.tableBytes.length, true);
+		wordView.setUint32(fib.fibRgFcLcbOffset + 13 * 8 + 4, bte.length, true);
+		const input = cfb.rewrap(word, table), doc = parseDoc(input);
+		expect(() => readDocParagraphAlignments(input)).toThrow('resource-limit');
+		expect(() => { doc.paragraphs[1]!.directAlignment = 'justify'; }).toThrow(UnsupportedOle2EditError);
+		expect(doc.serialize()).toStrictEqual(input);
+		expect(doc.dirty).toBe(false);
 	});
 });
