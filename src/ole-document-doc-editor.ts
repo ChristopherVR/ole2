@@ -61,8 +61,8 @@ import {
 	buildClxBytes,
 	decodePiecesText,
 	encodePieceText,
-	parsePieceTable,
 	parseDocClx,
+	DocResourceLimitError,
 	replacePieceRange,
 } from './ole-document-doc-pieces.js';
 import type { DocPiece } from './ole-document-doc-pieces.js';
@@ -74,6 +74,27 @@ const RISKY_STTB_INDICES = [21, 22, 23]; // bkmk sttb, bkf, bkl
 // [MS-DOC] 2.5.7/2.5.8/2.5.10: ignored table-character cache, email metadata,
 // revision-save IDs, and ignored theme/color mapping. None defines live CP ranges.
 const SAFE_EXTENDED_FC_LCB_INDICES = new Set([93, 94, 113, 181, 182]);
+
+/** Application processing budgets, measured in UTF-16 character positions and pieces.
+ * Raising them explicitly permits larger documents; they are not format validity limits. */
+export interface OleDocProcessingLimits {
+	maxCharacters?: number;
+	maxPieces?: number;
+}
+
+/** Defaults bound main-story expansion even when fast-save pieces alias physical bytes. */
+export const DEFAULT_OLE_DOC_PROCESSING_LIMITS = Object.freeze({ maxCharacters: 16_777_216, maxPieces: 65_536 });
+
+function processingLimits(limits?: OleDocProcessingLimits): Required<OleDocProcessingLimits> {
+	const resolved = {
+		maxCharacters: limits?.maxCharacters ?? DEFAULT_OLE_DOC_PROCESSING_LIMITS.maxCharacters,
+		maxPieces: limits?.maxPieces ?? DEFAULT_OLE_DOC_PROCESSING_LIMITS.maxPieces,
+	};
+	if (!Number.isSafeInteger(resolved.maxCharacters) || resolved.maxCharacters < 0 ||
+		!Number.isSafeInteger(resolved.maxPieces) || resolved.maxPieces < 0)
+		throw new Error('DOC processing limits must be nonnegative safe integers');
+	return resolved;
+}
 
 function hasUnsupportedFeatures(wordDoc: Uint8Array, fib: ParsedDocFib): boolean {
 	if (fib.ccpOtherStories > 0) return true;
@@ -131,15 +152,19 @@ function encodePieceTextUtf16(text: string): Uint8Array {
 	return bytes;
 }
 
-/** Read every main-body paragraph's plain text (paragraph mark excluded) from an embedded `.doc` payload. */
-export function readOleDocParagraphs(docBytes: Uint8Array): string[] | undefined {
+/** Read main-body paragraphs, excluding paragraph marks. Returns undefined for
+ * malformed/unsupported input or exceeded processing budgets. Defaults permit
+ * 16,777,216 UTF-16 main-story positions and 65,536 pieces; callers may override. */
+export function readOleDocParagraphs(docBytes: Uint8Array, limits?: OleDocProcessingLimits): string[] | undefined {
 	try {
+		const budget = processingLimits(limits);
 		const cfb = unwrapDocBytes(docBytes);
 		if (!cfb) {
 			return undefined;
 		}
 		const fib = readDocFib(cfb.wordDocBytes);
-		const pieces = parsePieceTable(cfb.tableBytes, fib.clx);
+		if (fib.ccpText > budget.maxCharacters) return undefined;
+		const pieces = parseDocClx(cfb.tableBytes, fib.clx, budget.maxPieces).pieces;
 		const totalCp = pieces.at(-1)?.cpEnd ?? 0;
 		if (totalCp > fib.ccpText + fib.ccpOtherStories + 1) return undefined;
 		const fullText = decodePiecesText(cfb.wordDocBytes, pieces, fib.ccpText);
@@ -190,24 +215,29 @@ export function writeOleDocParagraphEdit(
 	docBytes: Uint8Array,
 	paragraphIndex: number,
 	text: string,
+	limits?: OleDocProcessingLimits,
 ): Uint8Array {
-	return tryWriteOleDocParagraphEdit(docBytes, paragraphIndex, text).bytes;
+	return tryWriteOleDocParagraphEdit(docBytes, paragraphIndex, text, limits).bytes;
 }
 
 /** Explicit edit outcome; rejected edits always retain the original input bytes. */
 export type OleDocParagraphEditResult =
 	| { status: 'edited'; bytes: Uint8Array; strategy: 'preserved-runs' | 'piece-append' }
 	| { status: 'rejected'; bytes: Uint8Array; reason: 'invalid-payload' | 'unsupported-container' |
-		'unsupported-features' | 'invalid-paragraph-index' | 'invalid-text' | 'invalid-document' };
+		'unsupported-features' | 'invalid-paragraph-index' | 'invalid-text' | 'invalid-limits' | 'resource-limit' | 'invalid-document' };
 
 /** Apply the same paragraph edit as the compatibility API, with an explicit rejection reason. */
 export function tryWriteOleDocParagraphEdit(
 	docBytes: Uint8Array,
 	paragraphIndex: number,
 	text: string,
+	limits?: OleDocProcessingLimits,
 ): OleDocParagraphEditResult {
 	const rejected = (reason: Extract<OleDocParagraphEditResult, { status: 'rejected' }>['reason']): OleDocParagraphEditResult =>
 		({ status: 'rejected', bytes: docBytes, reason });
+	let budget: Required<OleDocProcessingLimits>;
+	try { budget = processingLimits(limits); } catch { return rejected('invalid-limits'); }
+	if (text.length > budget.maxCharacters) return rejected('resource-limit');
 	if (!Number.isInteger(paragraphIndex) || paragraphIndex < 0) return rejected('invalid-paragraph-index');
 	if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(text)) return rejected('invalid-text');
 	try {
@@ -216,7 +246,8 @@ export function tryWriteOleDocParagraphEdit(
 			return rejected('invalid-payload');
 		}
 		const fib = readDocFib(cfb.wordDocBytes);
-		const { pieces, prcBytes } = parseDocClx(cfb.tableBytes, fib.clx);
+		if (fib.ccpText > budget.maxCharacters) return rejected('resource-limit');
+		const { pieces, prcBytes } = parseDocClx(cfb.tableBytes, fib.clx, budget.maxPieces);
 		const totalCp = pieces.at(-1)?.cpEnd ?? 0;
 		if (totalCp > fib.ccpText + fib.ccpOtherStories + 1) return rejected('invalid-document');
 		const fullText = decodePiecesText(cfb.wordDocBytes, pieces, fib.ccpText);
@@ -231,6 +262,8 @@ export function tryWriteOleDocParagraphEdit(
 		if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(bodyText.slice(paragraphStartCp, paragraphEndCp)))
 			return rejected('unsupported-features');
 		const sanitizedText = text.replaceAll(/[\r\n]+/gu, ' ');
+		if (fib.ccpText - (paragraphEndCp - paragraphStartCp) + sanitizedText.length + 1 > budget.maxCharacters)
+			return rejected('resource-limit');
 		// A CP-stable replacement can retain every piece, formatting run and CP-keyed
 		// feature table, including features outside this paragraph. Only plain target
 		// paragraphs qualify, and compressed pieces must retain their encoding.
@@ -312,6 +345,7 @@ export function tryWriteOleDocParagraphEdit(
 			flagsWord: startPiece.flagsWord,
 			prm: startPiece.prm,
 		});
+		if (newPieces.length > budget.maxPieces) return rejected('resource-limit');
 		const delta = sanitizedText.length + 1 - (paragraphEndCp - paragraphStartCp);
 		const newCcpText = fib.ccpText + delta;
 
@@ -345,6 +379,7 @@ export function tryWriteOleDocParagraphEdit(
 
 		return { status: 'edited', strategy: 'piece-append', bytes: cfb.rewrap(newWordDoc, newTableBytes) };
 	} catch (error) {
+		if (error instanceof DocResourceLimitError) return rejected('resource-limit');
 		if (error instanceof DocCfbRewriteError) return rejected('unsupported-container');
 		return rejected('invalid-document');
 	}

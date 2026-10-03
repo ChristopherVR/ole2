@@ -44,8 +44,18 @@ export interface DocClx {
 	prcBytes: Uint8Array;
 }
 
+/** Requested processing budget was exceeded before allocating/decoding text. */
+export class DocResourceLimitError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'DocResourceLimitError';
+	}
+}
+
 /** Read a bounded CLX, retaining its formatting records ([MS-DOC] 2.9.38, 2.9.216). */
-export function parseDocClx(tableStream: Uint8Array, clx: { fc: number; lcb: number }): DocClx {
+export function parseDocClx(tableStream: Uint8Array, clx: { fc: number; lcb: number }, maxPieces?: number): DocClx {
+	if (maxPieces !== undefined && (!Number.isSafeInteger(maxPieces) || maxPieces < 0))
+		throw new Error('Invalid DOC piece limit');
 	const view = new DataView(tableStream.buffer, tableStream.byteOffset, tableStream.byteLength);
 	if (!Number.isInteger(clx.fc) || !Number.isInteger(clx.lcb) || clx.fc < 0 || clx.lcb < 5 ||
 		clx.fc > tableStream.length - clx.lcb) throw new Error('Clx is outside the table stream');
@@ -67,6 +77,8 @@ export function parseDocClx(tableStream: Uint8Array, clx: { fc: number; lcb: num
 			const lcb = view.getInt32(off + 1, true);
 			if (lcb < 4 || (lcb - 4) % 12 !== 0 || lcb !== end - off - 5)
 				throw new Error('Invalid PlcPcd length');
+			if (maxPieces !== undefined && (lcb - 4) / 12 > maxPieces)
+				throw new DocResourceLimitError('DOC piece count exceeds the processing limit');
 			const pieces = parsePlcPcd(view, off + 5, lcb);
 			for (const piece of pieces) {
 				if ((piece.prm & 1) !== 0 && (piece.prm >>> 1) >= prcCount)
