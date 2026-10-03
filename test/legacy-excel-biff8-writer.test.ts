@@ -425,3 +425,72 @@ describe('writeOleXlsStringCellEdit', () => {
 		);
 	});
 });
+
+describe('string rebuild preservation bounds', () => {
+ it('encodes non-Latin text and UTF-16 surrogate pairs without truncation', () => {
+  const original = buildSingleSheetWorkbook();
+  const updated = writeOleXlsStringCellEdit(original, {row:2,col:0,value:'日本語 Ω 😀'});
+  expect(readOleXlsGrid(updated)!.rows[2]!.cells[0]!.value).toBe('日本語 Ω 😀');
+ });
+ it('rejects oversized SST entries instead of overflowing BIFF record length', () => {
+  const original = buildSingleSheetWorkbook();
+  expect(writeOleXlsStringCellEdit(original, {row:2,col:0,value:'x'.repeat(9000)})).toBe(original);
+ });
+ it.each([0x0006, 0x0205, 0x00bd, 0x0204, 0x1234])('does not discard unsupported record %i inside the cell table', opcode => {
+  const original = buildSingleSheetWorkbook();
+  const worksheet = findAllWorksheetRanges(original)[0]!;
+  const firstCell = readRecords(original, worksheet.start, worksheet.end).find(r => r.opcode === 0x00fd)!;
+  const withUnsupported = new Uint8Array([...original.subarray(0,firstCell.headerOffset), ...record(opcode,[0,0,3,0,15,0,1,0,0,0]), ...original.subarray(firstCell.headerOffset)]);
+  expect(writeOleXlsStringCellEdit(withUnsupported, {row:2,col:0,value:'New'})).toBe(withUnsupported);
+ });
+ it('refuses a resize with INDEX pointers instead of leaving them stale', () => {
+  const original = buildSingleSheetWorkbook();
+  const sheet = findAllWorksheetRanges(original)[0]!;
+  const offset = sheet.start + bof(0x0010).length;
+  const withIndex = new Uint8Array([...original.subarray(0,offset), ...record(0x020b,new Array(20).fill(0)), ...original.subarray(offset)]);
+  expect(writeOleXlsStringCellEdit(withIndex, {row:2,col:0,value:'New'})).toBe(withIndex);
+ });
+});
+
+describe('SST metadata preservation', () => {
+ it('appends Unicode without rewriting existing rich string bytes', () => {
+  const original = buildSingleSheetWorkbook();
+  const sst = readRecords(original,0,original.length).find(r=>r.opcode===0xfc)!;
+  const data = [1,0,0,0,1,0,0,0,7,0,8,1,0,...Array.from('Revenue').map(c=>c.charCodeAt(0)),0,0,2,0];
+  const rich = new Uint8Array([...original.subarray(0,sst.headerOffset),...record(0xfc,data),...original.subarray(sst.dataOffset+sst.length)]);
+  const updated = writeOleXlsStringCellEdit(rich,{row:2,col:0,value:'Ω😀'});
+  expect(updated).not.toBe(rich);
+  const next = readRecords(updated,0,updated.length).find(r=>r.opcode===0xfc)!;
+  expect(Array.from(updated.subarray(next.dataOffset+8,next.dataOffset+data.length))).toEqual(data.slice(8));
+  expect(readOleXlsGrid(updated)!.rows[0]!.cells[0]!.value).toBe('Revenue');
+  expect(readOleXlsGrid(updated)!.rows[2]!.cells[0]!.value).toBe('Ω😀');
+ });
+});
+
+describe('rebuilt cell table offsets', () => {
+ it('emits 16-byte ROW records and relative DBCELL offsets', () => {
+  const updated = writeOleXlsStringCellEdit(buildSingleSheetWorkbook(),{row:2,col:0,value:'New'});
+  const sheet = findAllWorksheetRanges(updated)[0]!;
+  const rs = readRecords(updated,sheet.start,sheet.end);
+  const rows = rs.filter(r=>r.opcode===0x208);
+  expect(rows.every(r=>r.length===16)).toBe(true);
+  const cells = rs.filter(r=>[0x203,0xfd,0x201].includes(r.opcode));
+  const first = rows.map((_,i)=>cells.find(c=>new DataView(updated.buffer).getUint16(c.dataOffset,true)===i)!.headerOffset);
+  const db = rs.find(r=>r.opcode===0xd7)!;
+  const view = new DataView(updated.buffer);
+  expect(view.getUint32(db.dataOffset,true)).toBe(db.headerOffset-rows[0]!.headerOffset);
+  expect(rows.map((_,i)=>view.getUint16(db.dataOffset+4+i*2,true))).toEqual(first.map((offset,i)=>offset-(i===0?rows[0]!.dataOffset+rows[0]!.length:first[i-1]!)));
+ });
+ it('updates DIMENSIONS when inserting beyond the used range', () => {
+  const original = buildSingleSheetWorkbook();
+  const sheet = findAllWorksheetRanges(original)[0]!;
+  const offset = sheet.start+bof(0x0010).length;
+  const dimensions = record(0x200,[0,0,0,0,2,0,0,0,0,0,2,0,0,0]);
+  const withDimensions = new Uint8Array([...original.subarray(0,offset),...dimensions,...original.subarray(offset)]);
+  const updated = writeOleXlsStringCellEdit(withDimensions,{row:4,col:3,value:'New'});
+  const d = readRecords(updated,0,updated.length).find(r=>r.opcode===0x200)!;
+  const v = new DataView(updated.buffer);
+  expect(v.getUint32(d.dataOffset+4,true)).toBe(5);
+  expect(v.getUint16(d.dataOffset+10,true)).toBe(4);
+ });
+});

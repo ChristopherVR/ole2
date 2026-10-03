@@ -28,6 +28,7 @@
  *
  * @module ole-sheet-xls-biff8
  */
+import { editXlsNumericCell } from './legacy-excel-biff8-edit.js';
 import { unwrapXlsBytes } from './legacy-excel-cfb.js';
 import type { OleSheetCell, OleSheetGrid, OleSheetRow } from './legacy-excel-types.js';
 
@@ -129,7 +130,7 @@ export function findFirstWorksheetRange(
 export function parseSstSingleRecord(bytes: Uint8Array): string[] {
 	const records = readRecords(bytes, 0, bytes.length);
 	const sst = records.find((r) => r.opcode === OPCODE_SST);
-	if (!sst) {
+	if (!sst || sst.length < 8) {
 		return [];
 	}
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -137,7 +138,8 @@ export function parseSstSingleRecord(bytes: Uint8Array): string[] {
 	let offset = sst.dataOffset + 8; // skip total/unique counts
 	const end = sst.dataOffset + sst.length;
 	try {
-		while (offset + 3 <= end) {
+		const unique = view.getUint32(sst.dataOffset + 4, true);
+		while (strings.length < unique && offset + 3 <= end) {
 			const charCount = view.getUint16(offset, true);
 			const flags = view.getUint8(offset + 2);
 			offset += 3;
@@ -147,13 +149,16 @@ export function parseSstSingleRecord(bytes: Uint8Array): string[] {
 			let richRuns = 0;
 			let extLen = 0;
 			if (isRich) {
+				if (offset + 2 > end) break;
 				richRuns = view.getUint16(offset, true);
 				offset += 2;
 			}
 			if (hasExt) {
+				if (offset + 4 > end) break;
 				extLen = view.getUint32(offset, true);
 				offset += 4;
 			}
+			if (offset + charCount * (isWide ? 2 : 1) + richRuns * 4 + extLen > end) break;
 			let text = '';
 			for (let i = 0; i < charCount; i++) {
 				if (isWide) {
@@ -280,35 +285,5 @@ export function writeOleXlsNumericCellEdit(
 	inputBytes: Uint8Array,
 	edit: { row: number; col: number; value: number },
 ): Uint8Array {
-	if (!Number.isFinite(edit.value)) {
-		return inputBytes;
-	}
-	const { workbookBytes: xlsBytes, rewrap } = unwrapXlsBytes(inputBytes);
-	if (!isSupportedBiff8Workbook(xlsBytes)) return inputBytes;
-	const range = findFirstWorksheetRange(xlsBytes);
-	if (!range) {
-		return inputBytes;
-	}
-	const out = new Uint8Array(xlsBytes);
-	const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
-
-	for (const record of readRecords(out, range.start, range.end)) {
-		if (record.length < 6) {
-			continue;
-		}
-		const row = view.getUint16(record.dataOffset, true);
-		const col = view.getUint16(record.dataOffset + 2, true);
-		if (row !== edit.row || col !== edit.col) {
-			continue;
-		}
-		if (record.opcode === OPCODE_NUMBER && record.length >= 14) {
-			view.setFloat64(record.dataOffset + 6, edit.value, true);
-			return rewrap ? rewrap(out) : out;
-		}
-		if (record.opcode === OPCODE_RK && record.length >= 10) {
-			view.setInt32(record.dataOffset + 6, encodeRk(edit.value), true);
-			return rewrap ? rewrap(out) : out;
-		}
-	}
-	return inputBytes;
+	return editXlsNumericCell(inputBytes, edit).bytes;
 }

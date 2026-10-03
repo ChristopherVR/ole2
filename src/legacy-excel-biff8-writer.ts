@@ -72,24 +72,30 @@ import { unwrapXlsBytes } from './legacy-excel-cfb.js';
 
 /** Resolve (finding or appending) the SST index for `value`, and the rebuilt `SST` record bytes when it changed. */
 function resolveSstIndex(
-	sharedStrings: string[],
-	value: string,
+	sharedStrings: string[], value: string, bytes: Uint8Array,
 ): { index: number; rebuilt?: number[] } {
 	const existing = sharedStrings.indexOf(value);
-	if (existing !== -1) {
-		return { index: existing };
+	if (existing !== -1) return { index: existing };
+	const records = readRecords(bytes, 0, bytes.length);
+	const sst = records.find((r) => r.opcode === OPCODE_SST);
+	if (!sst || sst.length < 8 || value.length > 32767) throw new Error('Unsupported SST');
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	const unique = view.getUint32(sst.dataOffset + 4, true);
+	if (unique !== sharedStrings.length || records[records.indexOf(sst) + 1]?.opcode === 0x003c) throw new Error('Continued or incomplete SST');
+	// Append to the original serialized strings, preserving rich runs/ext data.
+	const data = Array.from(bytes.subarray(sst.dataOffset, sst.dataOffset + sst.length));
+	const wide = Array.from({ length: value.length }, (_, i) => value.charCodeAt(i)).some((c) => c > 255);
+	data.push(...u16le(value.length), wide ? 1 : 0);
+	for (let i = 0; i < value.length; i++) {
+		const c = value.charCodeAt(i);
+		data.push(c & 255);
+		if (wide) data.push(c >> 8);
 	}
-	const next = [...sharedStrings, value];
-	const data: number[] = [];
-	data.push(...u16le(next.length & 0xffff), 0, 0); // total count (low 16 only; good enough for small sheets)
-	data.push(...u16le(next.length & 0xffff), 0, 0); // unique count
-	for (const s of next) {
-		data.push(...u16le(s.length), 0x00); // charCount, flags=0 (narrow, no rich/ext)
-		for (const ch of s) {
-			data.push(ch.charCodeAt(0) & 0xff);
-		}
-	}
-	return { index: next.length - 1, rebuilt: biffRecord(OPCODE_SST, data) };
+	if (data.length > 8224) throw new Error('SST continuation required');
+	const counts = new DataView(new Uint8Array(data).buffer);
+	counts.setUint32(0, view.getUint32(sst.dataOffset, true) + 1, true);
+	counts.setUint32(4, unique + 1, true);
+	return { index: unique, rebuilt: biffRecord(OPCODE_SST, Array.from(new Uint8Array(counts.buffer))) };
 }
 
 /** Try the zero-resize path: swap an existing 10-byte `RK`/`LABELSST` cell record in place. */
@@ -184,10 +190,19 @@ export function writeOleXlsStringCellEdit(
 	inputBytes: Uint8Array,
 	edit: { row: number; col: number; value: string },
 ): Uint8Array {
+	if (!Number.isInteger(edit.row) || edit.row < 0 || edit.row > 65535 || !Number.isInteger(edit.col) || edit.col < 0 || edit.col > 255 || edit.value.length > 32767) return inputBytes;
 	try {
 		const { workbookBytes: xlsBytes, rewrap } = unwrapXlsBytes(inputBytes);
 		if (!isSupportedBiff8Workbook(xlsBytes)) return inputBytes;
-		const finish = (result: Uint8Array): Uint8Array => (rewrap ? rewrap(result) : result);
+		const finish = (result: Uint8Array): Uint8Array => {
+			const records = readRecords(result, 0, result.length);
+			const sst = records.find((r) => r.opcode === OPCODE_SST);
+			if (sst && sst.length >= 8) {
+				new DataView(result.buffer, result.byteOffset, result.byteLength).setUint32(
+					sst.dataOffset, records.filter((r) => r.opcode === OPCODE_LABELSST).length, true);
+			}
+			return rewrap ? rewrap(result) : result;
+		};
 
 		const ranges = findAllWorksheetRanges(xlsBytes);
 		const target = ranges[0];
@@ -195,7 +210,7 @@ export function writeOleXlsStringCellEdit(
 			return inputBytes;
 		}
 		const sharedStrings = parseSstSingleRecord(xlsBytes);
-		const { index: sstIndex, rebuilt: newSstRecord } = resolveSstIndex(sharedStrings, edit.value);
+		const { index: sstIndex, rebuilt: newSstRecord } = resolveSstIndex(sharedStrings, edit.value, xlsBytes);
 
 		if (!newSstRecord) {
 			// The string already exists in the SST: try the free, zero-resize path first.
@@ -217,11 +232,24 @@ export function writeOleXlsStringCellEdit(
 		const allRecords = readRecords(xlsBytes, 0, xlsBytes.length);
 		const sstRecord = allRecords.find((r) => r.opcode === OPCODE_SST);
 		const extSstRecord = allRecords.find((r) => r.opcode === OPCODE_EXTSST);
+		if (allRecords.filter((r) => r.opcode === OPCODE_BOUNDSHEET).length > 1) return inputBytes;
+		if (sstRecord && extSstRecord && extSstRecord.headerOffset !== sstRecord.dataOffset + sstRecord.length) return inputBytes;
 		if (!sstRecord) {
 			return inputBytes; // no SST at all is not a shape this module recognises
 		}
 
+		const region = findRowCellRegion(xlsBytes, target);
+		const sheetRecords = readRecords(xlsBytes, target.start, target.end);
+		// INDEX holds absolute DBCELL pointers; rebuilding without updating it is unsafe.
+		if (sheetRecords.some((r) => [0x020b, 0x0006, 0x0205, 0x00bd, 0x00be, OPCODE_LABEL, 0x00d6].includes(r.opcode)) || sheetRecords.filter((r) => r.opcode === 0x0809).length !== 1) return inputBytes;
+		// No record in the replaced span may be discarded. FORMULA/BOOLERR/MULRK,
+		// inline LABEL, unknown records and nested chart substreams need a fuller writer.
+		if (readRecords(xlsBytes, region.start, region.end).some((r) =>
+			!(r.opcode === OPCODE_ROW || r.opcode === OPCODE_DBCELL ||
+			 r.opcode === OPCODE_NUMBER || r.opcode === OPCODE_RK ||
+			 r.opcode === OPCODE_LABELSST || r.opcode === OPCODE_BLANK))) return inputBytes;
 		const grid = parseXlsGrid(xlsBytes, target);
+		if (new Set([...grid.keys(), edit.row]).size > 32) return inputBytes;
 		const row = grid.get(edit.row) ?? { cells: new Map<number, GridCell>() };
 		row.cells.set(edit.col, {
 			ixfe: row.cells.get(edit.col)?.ixfe ?? 15,
@@ -230,9 +258,8 @@ export function writeOleXlsStringCellEdit(
 		});
 		grid.set(edit.row, row);
 		const newRegion = buildXlsRowCellRegion(grid);
-		const region = findRowCellRegion(xlsBytes, target);
 
-		const sstEnd = extSstRecord
+		const sstEnd = extSstRecord && extSstRecord.headerOffset === sstRecord.dataOffset + sstRecord.length
 			? extSstRecord.dataOffset + extSstRecord.length
 			: sstRecord.dataOffset + sstRecord.length;
 
@@ -256,8 +283,39 @@ export function writeOleXlsStringCellEdit(
 			...newRegion,
 			...patchedXlsBytes.subarray(region.end),
 		];
-		return finish(Uint8Array.from(out));
+		const result = Uint8Array.from(out);
+		const dimensions = readRecords(result, 0, result.length).find((r) => r.opcode === OPCODE_DIMENSIONS);
+		if (dimensions) {
+			if (dimensions.length !== 14) return inputBytes;
+			const view = new DataView(result.buffer);
+			const rows = [...grid.keys()];
+			const cols = [...grid.values()].flatMap((row) => [...row.cells.keys()]);
+			view.setUint32(dimensions.dataOffset, Math.min(...rows), true);
+			view.setUint32(dimensions.dataOffset + 4, Math.max(...rows) + 1, true);
+			view.setUint16(dimensions.dataOffset + 8, Math.min(...cols), true);
+			view.setUint16(dimensions.dataOffset + 10, Math.max(...cols) + 1, true);
+		}
+		return finish(result);
 	} catch {
 		return inputBytes;
 	}
+}
+
+/** Checked companion to the compatibility byte-returning string editor.
+ * Unsafe resizing (continued SST, INDEX, unsupported cell records, nested
+ * substreams, multiple worksheets or non-writable CFB layout) is explicit.
+ */
+export function editXlsStringCell(
+ input: Uint8Array,
+ edit: { row: number; col: number; value: string },
+): { status: 'edited'; bytes: Uint8Array; recalculationRequired: true } |
+   { status: 'unchanged'; bytes: Uint8Array; reason: 'invalid-edit' | 'unsupported-or-unsafe-edit' } {
+ if (!Number.isInteger(edit.row) || edit.row < 0 || edit.row > 65535 ||
+     !Number.isInteger(edit.col) || edit.col < 0 || edit.col > 255 || edit.value.length > 32767) {
+  return { status: 'unchanged', bytes: input, reason: 'invalid-edit' };
+ }
+ const bytes = writeOleXlsStringCellEdit(input, edit);
+ return bytes === input
+  ? { status: 'unchanged', bytes: input, reason: 'unsupported-or-unsafe-edit' }
+  : { status: 'edited', bytes, recalculationRequired: true };
 }

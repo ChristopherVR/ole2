@@ -121,7 +121,7 @@ export function buildXlsRowCellRegion(grid: Map<number, GridRow>): Uint8Array {
 		const colFirst = cols[0] ?? 0;
 		const colLast = cols.length > 0 ? cols[cols.length - 1]! + 1 : 0;
 		rowRecordOffsets.push(bytesOut.length);
-		const extra = row.extraRowBytes ?? [0xff, 0x00, 0, 0, 0x00, 0x01, 0x0f, 0x00];
+		const extra = row.extraRowBytes ?? [0xff, 0x00, 0, 0, 0x00, 0x01, 0x0f, 0x00, 0, 0];
 		bytesOut.push(
 			...biffRecord(OPCODE_ROW, [...u16le(r), ...u16le(colFirst), ...u16le(colLast), ...extra]),
 		);
@@ -164,8 +164,13 @@ export function buildXlsRowCellRegion(grid: Map<number, GridRow>): Uint8Array {
 	if (rows.length > 0) {
 		const dbCellOffset = bytesOut.length;
 		const dbData: number[] = [0, 0, 0, 0]; // placeholder for the back-offset to the first ROW, filled below
-		for (const off of firstCellOffsetPerRow) {
-			dbData.push(...u16le(dbCellOffset - off));
+		for (let i = 0; i < firstCellOffsetPerRow.length; i++) {
+			// First offset is measured from the end of the first ROW; later
+			// offsets are relative to the previous row's first cell record.
+			const base = i === 0 ? rowRecordOffsets[0]! + 20 : firstCellOffsetPerRow[i - 1]!;
+			const offset = firstCellOffsetPerRow[i]! - base;
+			if (offset < 0 || offset > 65535) throw new Error('DBCELL offset exceeds UInt16');
+			dbData.push(...u16le(offset));
 		}
 		const backToFirstRow = dbCellOffset - rowRecordOffsets[0]!;
 		dbData[0] = backToFirstRow & 0xff;
