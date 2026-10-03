@@ -1,6 +1,6 @@
 /** [MS-DOC] 2.2.5, 2.6.1: direct CHPX exceptions, not resolved style formatting.
  * Unknown SPRMs remain opaque. Editing forces an absolute value in an exclusive
- * existing bold/italic operand, without rebuilding formatting pages. */
+ * existing bold/italic or font-size operand, without rebuilding formatting pages. */
 import { unwrapDocBytes } from './ole-document-doc-cfb.js';
 import { readDocFib } from './ole-document-doc-fib.js';
 import { parseBteTable, extractPapxBlob } from './ole-document-doc-fkp.js';
@@ -138,15 +138,30 @@ export function readDocParagraphStyleIndices(input: Uint8Array): readonly (numbe
  * are replaced with an absolute value, without inferring their previous state. */
 export function writeDocCharacterRunFlag(input: Uint8Array, cpStart: number, cpEnd: number, flag: 'bold' | 'italic', value: boolean): Uint8Array {
 	if (typeof value !== 'boolean' || !Number.isSafeInteger(cpStart) || !Number.isSafeInteger(cpEnd) || (flag !== 'bold' && flag !== 'italic')) throw new Error('invalid-formatting');
+	return writeExclusiveOperand(input, cpStart, cpEnd, flag === 'bold' ? 0x0835 : 0x0836, Number(value));
+}
+
+/** [MS-DOC] 2.6.1 sprmCHps: unsigned two-byte half-points, 2..3276.
+ * Only an existing exclusive direct slot is writable; styles remain unresolved. */
+export function writeDocCharacterRunFontSize(input: Uint8Array, cpStart: number, cpEnd: number, points: number): Uint8Array {
+	if (typeof points !== 'number' || !Number.isFinite(points) || !Number.isInteger(points * 2) || points < 1 || points > 1638 ||
+		!Number.isSafeInteger(cpStart) || !Number.isSafeInteger(cpEnd)) throw new Error('invalid-formatting');
+	return writeExclusiveOperand(input, cpStart, cpEnd, 0x4a43, points * 2);
+}
+
+function writeExclusiveOperand(input: Uint8Array, cpStart: number, cpEnd: number, opcode: number, value: number): Uint8Array {
 	const parsed = inspect(input), target = parsed.runs.find((run) => run.cpStart === cpStart && run.cpEnd === cpEnd);
 	if (!target || target.prm !== 0 || /[\x00-\x1f]/u.test(target.text)) throw new Error('unsupported-formatting');
-	const row = target.physical, opcode = flag === 'bold' ? 0x0835 : 0x0836;
+	const row = target.physical;
 	const extension = parsed.fib.fibRgFcLcbOffset + parsed.fib.fibRgFcLcbCount * 8;
 	const fibEnd = extension + 2 + new DataView(parsed.word.buffer, parsed.word.byteOffset, parsed.word.byteLength).getUint16(extension, true) * 2;
 	if (row.blob < fibEnd) throw new Error('aliased-formatting');
 	if (row.prls.some((p) => !SAFE_OPERANDS.has(p.opcode))) throw new Error('opaque-formatting');
 	const operands = row.prls.filter((p) => p.opcode === opcode);
-	if (operands.length !== 1 || ![0, 1, 128, 129].includes(operands[0]!.operand[0]!)) throw new Error('inherited-formatting');
+	if (operands.length !== 1) throw new Error('inherited-formatting');
+	const operand = operands[0]!, size = opcode === 0x4a43;
+	const previous = operand.operand[0]! + (size ? operand.operand[1]! * 256 : 0);
+	if (size ? operand.operand.length !== 2 || previous < 2 || previous > 3276 : ![0, 1, 128, 129].includes(previous)) throw new Error('inherited-formatting');
 	// A partial piece/paragraph view must not mutate another logical character.
 	const piece = parsed.pieces.find((p) => p.cpStart <= cpStart && p.cpEnd >= cpEnd)!;
 	const unit = piece.compressed ? 1 : 2, start = piece.fc + (cpStart - piece.cpStart) * unit;
@@ -156,7 +171,8 @@ export function writeDocCharacterRunFlag(input: Uint8Array, cpStart: number, cpE
 	if (parsed.physical.some((r) => r !== row && r.blob && r.blob < row.blobEnd && row.blob < r.blobEnd) ||
 		parsed.papx.pns.includes(Math.floor(row.blob / 512)) ||
 		parsed.pieces.some((p) => p.fc < row.blobEnd && row.blob < p.fc + (p.cpEnd - p.cpStart) * (p.compressed ? 1 : 2))) throw new Error('aliased-formatting');
-	if (operands[0]!.operand[0] === Number(value)) return input;
-	const word = parsed.word.slice(); word[operands[0]!.at] = Number(value);
+	if (previous === value) return input;
+	const word = parsed.word.slice(); word[operand.at] = value & 255;
+	if (size) word[operand.at + 1] = value >>> 8;
 	return parsed.doc.rewrap(word, parsed.doc.tableBytes);
 }

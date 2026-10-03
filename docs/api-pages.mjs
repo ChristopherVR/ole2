@@ -41,7 +41,7 @@ export const apiPages = [
         "body": "paragraph.runs maps CLX pieces and CHPX formatting pages to character positions. styleIndex reads the PAPX paragraph style identifier.",
         "bullets": [
           "Direct bold/italic/font-size values are exposed separately from inherited or undecoded styling. Unknown SPRMs remain opaque.",
-          "Existing exclusive understood bold/italic operands can be set to absolute values. Shared blobs, opaque semantics and missing slots refuse.",
+          "Existing exclusive understood bold/italic operands can be set to absolute values. directFontSizePoints can replace an existing exclusive sprmCHps slot with 1..1638 points in exact half-point increments. Shared blobs, opaque semantics and missing slots refuse.",
           "Run handles expire after edits; reacquire paragraph.runs. Styles and piece PRMs are not resolved."
         ]
       },

@@ -72,11 +72,24 @@ internal adapter hooks, not a supported external mutation API.
 
 | Model | Supported mutations | Explicit limitations |
 | --- | --- | --- |
-| DOC | Existing plain paragraph text; guarded growth/shrink outside balanced main-story fields; existing exclusive direct bold/italic operands | No style resolution, new formatting records, paragraph insertion/removal, table/object model writes, field-code/result editing or unsupported CP-table shifts; processing budgets apply |
+| DOC | Existing plain paragraph text; guarded growth/shrink outside balanced main-story fields; existing exclusive direct bold/italic and font-size operands | No style resolution, new formatting records, paragraph insertion/removal, table/object model writes, field-code/result editing or unsupported CP-table shifts; processing budgets apply |
 | XLS | Existing numeric/string cells; NUMBER/RK/MULRK to boolean/error and existing BOOLERR replacement | No cell creation, formulas or recalculation; unsupported type changes and unsafe relocation records/layouts refused; selected rich string becomes plain while retaining XF and other aliases |
 | PPT | Existing active fixed-length text; supported small-anchor rectangle/text-box bounds | Inline shape text is linked by validated identity; outline refs may remain unresolved. Group/mirror/inherited/rotated/large-anchor edits refuse; no general run/notes reconstruction |
 | VSD v11 | Existing same-length UTF-16 shape text; exclusive top-level literal transforms | No older-version model, formula/style/master evaluation, fields or structural creation; shared/overlapping blocks and dependent transform edits refuse |
 | CFB | Supported existing regular/mini stream resizing with path/hierarchy preservation | No new directory entries, external DIFAT expansion or variable-length v4 mini transitions; container support is separate from Office fidelity |
+
+For DOC, `doc.paragraphs[index].runs[runIndex].directFontSizePoints = 13.5`
+replaces an existing exclusive direct `sprmCHps` operand. Values must be primitive
+finite numbers from 1 to 1638 points in exact 0.5-point increments, matching the
+[MS-DOC character properties specification](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/7022285b-9621-42e9-ad4d-4e02c115ef18).
+Missing, invalid or duplicate slots, opaque formatting, piece PRMs, partial runs
+and shared or aliased formatting are refused. The setter preserves every byte
+outside that operand. It does not insert font records, resolve inherited styles
+or set complex-script font size. An undefined getter means inherited or
+undecoded formatting. Invalid values throw `UnsupportedOle2EditError` with
+`reason: 'invalid-formatting'`; expired handles throw `reason: 'stale-run'`.
+After a successful mutation, reacquire the run through the stable paragraph's
+`.runs` getter before another edit. No-op setters retain the handle and revision.
 
 ## Compatibility and migration
 

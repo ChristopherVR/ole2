@@ -1,6 +1,6 @@
 import { Ole2DocumentBase, Ole2DocumentError, UnsupportedOle2EditError } from './ole2-document-base.js';
 import { readOleDocParagraphs, tryWriteOleDocParagraphEdit } from './ole-document-doc-editor.js';
-import { readDocCharacterRuns, readDocParagraphStyleIndices, writeDocCharacterRunFlag } from './ole-document-doc-runs.js';
+import { readDocCharacterRuns, readDocParagraphStyleIndices, writeDocCharacterRunFlag, writeDocCharacterRunFontSize } from './ole-document-doc-runs.js';
 import type { DocSprm } from './ole-document-doc-runs.js';
 import type { ParsedDocCharacterRun } from './ole-document-doc-runs.js';
 
@@ -12,7 +12,7 @@ export interface DocCharacterRun {
 	readonly text: string;
 	directBold: boolean | undefined;
 	directItalic: boolean | undefined;
-	readonly directFontSizePoints: number | undefined;
+	directFontSizePoints: number | undefined;
 	readonly sprms: readonly DocSprm[];
 }
 
@@ -34,11 +34,12 @@ export interface ParsedDocParagraph extends DocParagraph {
 
 const DOC_CAPABILITIES = Object.freeze({
 	read: Object.freeze(['paragraph-text', 'character-runs', 'direct-character-formatting', 'paragraph-style-index', 'compound-streams']),
-	write: Object.freeze(['paragraph-text', 'existing-direct-bold-italic']),
+	write: Object.freeze(['paragraph-text', 'existing-direct-bold-italic', 'existing-direct-font-size']),
 	limitations: Object.freeze([
 		'Paragraph insertion, removal and embedded paragraph breaks are unsupported.',
 		'Character formatting reports direct CHPX exceptions, without resolving styles or piece PRMs.',
 		'Bold/italic setters force an absolute value in an existing exclusive understood CHPX run. Run handles expire after edits.',
+		'Font-size setters replace an existing exclusive sprmCHps slot with 1..1638 points in exact half-point increments.',
 		'Fields, tables, objects and inherited styles are preserved where supported; their models are not editable.',
 		'Unsupported edits and processing limits throw without changing the document.',
 		'Text uses the bounded DOC codec defaults: 16,777,216 main-story characters and 65,536 pieces or field records.',
@@ -97,22 +98,24 @@ export class DocDocument extends Ole2DocumentBase {
 		try {
 			return Object.freeze(this.#currentRuns().filter((r) => r.cpStart < end && r.cpEnd > start).map((run) => {
 				const cpStart = Math.max(start, run.cpStart), cpEnd = Math.min(end, run.cpEnd);
-				let bold = run.directBold, italic = run.directItalic, sprms = run.sprms;
-				const set = (flag: 'bold' | 'italic', value: boolean | undefined) => {
+				let bold = run.directBold, italic = run.directItalic, size = run.directFontSizePoints, sprms = run.sprms;
+				const set = (flag: 'bold' | 'italic' | 'size', value: boolean | number | undefined) => {
 					if (owner.revision !== revision) throw new UnsupportedOle2EditError('stale-run');
-					if (typeof value !== 'boolean') throw new UnsupportedOle2EditError('invalid-formatting');
+					if (flag === 'size' ? typeof value !== 'number' : typeof value !== 'boolean') throw new UnsupportedOle2EditError('invalid-formatting');
 					let bytes: Uint8Array;
-					try { bytes = writeDocCharacterRunFlag(owner.getBytes(), cpStart, cpEnd, flag, value); }
+					try { bytes = flag === 'size' ? writeDocCharacterRunFontSize(owner.getBytes(), cpStart, cpEnd, value as number) : writeDocCharacterRunFlag(owner.getBytes(), cpStart, cpEnd, flag, value as boolean); }
 					catch (error) { throw new UnsupportedOle2EditError(error instanceof Error ? error.message : 'unsupported-formatting'); }
 					const text = readOleDocParagraphs(bytes);
 					if (!text || text.length !== owner.#text.length || text.some((t, i) => t !== owner.#text[i])) throw new UnsupportedOle2EditError('invalid-document');
 					readDocCharacterRuns(bytes); // Revalidate the candidate before the atomic commit.
 					owner.commitBytes(bytes);
-					if (flag === 'bold') bold = value; else italic = value;
-					sprms = Object.freeze(sprms.map((p) => p.opcode === (flag === 'bold' ? 0x0835 : 0x0836) ?
-						Object.freeze({ opcode: p.opcode, operand: Object.freeze([Number(value)]) }) : p));
+					if (flag === 'bold') bold = value as boolean; else if (flag === 'italic') italic = value as boolean; else size = value as number;
+					const opcode = flag === 'bold' ? 0x0835 : flag === 'italic' ? 0x0836 : 0x4a43;
+					const operand = flag === 'size' ? [(value as number) * 2 & 255, (value as number) * 2 >>> 8] : [Number(value)];
+					sprms = Object.freeze(sprms.map((p) => p.opcode === opcode ?
+						Object.freeze({ opcode: p.opcode, operand: Object.freeze(operand) }) : p));
 				};
-				return Object.freeze({ cpStart, cpEnd, text: run.text.slice(cpStart - run.cpStart, cpEnd - run.cpStart), directFontSizePoints: run.directFontSizePoints, get sprms() { return sprms; },
+				return Object.freeze({ cpStart, cpEnd, text: run.text.slice(cpStart - run.cpStart, cpEnd - run.cpStart), get directFontSizePoints() { return size; }, set directFontSizePoints(value: number | undefined) { set('size', value); }, get sprms() { return sprms; },
 					get directBold() { return bold; }, set directBold(value: boolean | undefined) { set('bold', value); },
 					get directItalic() { return italic; }, set directItalic(value: boolean | undefined) { set('italic', value); },
 				});
