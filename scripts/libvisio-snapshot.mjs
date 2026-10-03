@@ -36,7 +36,7 @@ const run = args => {
 const version = run(['--version']).stdout.trim();
 const parsed = run([mode === '--wsl' ? toWsl(inputPath) : inputPath]);
 const callbacks = parsed.stdout.replaceAll('\r\n', '\n');
-if (!callbacks.includes('startDocument()') || !callbacks.includes('endDocument()') || !callbacks.includes('startPage(')) {
+if (!callbacks.includes('startDocument()') || !/^endDocument(?:\(\))?\s*$/m.test(callbacks) || !callbacks.includes('startPage(')) {
   throw new Error('Reader did not produce a complete nonempty drawing callback document');
 }
 const sha256 = p => createHash('sha256').update(readFileSync(p)).digest('hex');
