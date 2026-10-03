@@ -3,16 +3,17 @@
 		<div class="hero-copy">
 			<p class="eyebrow">OLE2 · LEGACY OFFICE · TYPESCRIPT</p>
 			<h1 id="page-title">Legacy formats,<br /><em>clear boundaries.</em></h1>
-			<p class="lede">Shared OLE2 building blocks for readers and writers that state exactly which document features they support.</p>
+			<p class="lede">Parse legacy Office files into typed documents, edit supported content through stable models, and serialize while preserving unknown streams.</p>
 			<div class="hero-actions"><a class="button button--solid" href="#formats">Explore format guides</a>{{demo_action}}</div>
 			<div class="install-line"><span>Install</span><code>npm install @christophervr/ole2</code></div>
 		</div>
-		<aside class="scope-card" aria-label="Package scope"><p class="eyebrow">WHAT THIS PACKAGE DOES</p><h2>Read and write the container. Handle document content by format.</h2><p>MS-CFB streams, selected Word and Excel edits, PowerPoint binary export, and validated Visio/Publisher inspection.</p></aside>
+		<aside class="scope-card" aria-label="Package scope"><p class="eyebrow">WHAT THIS PACKAGE DOES</p><h2>Typed document models with explicit editing limits.</h2><p>Word paragraphs, Excel tabs and cells, active PowerPoint slide text, and preserving compound-file stream edits. Visio and Publisher currently expose structural inspection.</p></aside>
 	</div>
 </section>
 <section class="formats-section" id="formats" aria-labelledby="formats-title">
 	<div class="section-heading"><div><p class="eyebrow">FORMAT GUIDES</p><h2 id="formats-title">Choose the document you have</h2></div><p>Each guide separates implemented operations from unsupported document content.</p></div>
 	<div class="format-grid">
+		<a class="format-card format-card--shared" href="{{models}}"><span class="format-card__kind">PRIMARY API</span><h3>Document models</h3><p>Use parseOle2 or checked format parsers, inspect capabilities, edit model properties, and serialize owned bytes.</p><span class="format-card__link">Read the document model guide</span></a>
 		<a class="format-card" href="{{word}}"><span class="format-card__kind">DOC · WORD 97–2003</span><h3>Word</h3><p>Read main-body paragraphs and apply constrained text edits that preserve paragraph formatting.</p><span class="format-card__link">Read the Word guide <span aria-hidden="true">→</span></span></a>
 		<a class="format-card" href="{{excel}}"><span class="format-card__kind">XLS · BIFF8</span><h3>Excel</h3><p>Preview a bounded first-sheet grid and edit supported numeric or string cells.</p><span class="format-card__link">Read the Excel guide <span aria-hidden="true">→</span></span></a>
 		<a class="format-card" href="{{powerpoint}}"><span class="format-card__kind">PPT · POWERPOINT 97–2003</span><h3>PowerPoint</h3><p>Build legacy presentations from the neutral writer model and inspect record streams.</p><span class="format-card__link">Read the PowerPoint guide <span aria-hidden="true">→</span></span></a>

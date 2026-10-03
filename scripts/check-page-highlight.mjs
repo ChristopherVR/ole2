@@ -23,9 +23,10 @@ try {
 	await writeFile(join(site, 'site.css'), '');
 	await writeFile(join(site, 'theme.js'), '');
 	const generated = await generateSitePages(site);
-	assert.equal(generated.pageCount, 7);
+	assert.equal(generated.pageCount, 8);
 	const home = await readFile(join(site, 'index.html'), 'utf8');
 	assert.match(home, /href="\.\/api\/word\/"/);
+	assert.match(home, /href="\.\/api\/models\/"/);
 	assert.match(home, /href="\.\/api\/publisher\/"/);
 	assert.doesNotMatch(home, /\{\{[^}]+\}\}/);
 	const word = await readFile(join(site, 'api/word/index.html'), 'utf8');
