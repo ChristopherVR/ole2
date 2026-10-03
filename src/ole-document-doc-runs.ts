@@ -18,12 +18,15 @@ export interface ParsedDocCharacterRun {
 	readonly directBold: boolean | undefined;
 	readonly directItalic: boolean | undefined;
 	readonly directFontSizePoints: number | undefined;
-	readonly directUnderline: 'none' | 'single' | 'double' | undefined;
+	readonly directUnderline?: 'none' | 'single' | 'double' | undefined;
 	readonly sprms: readonly DocSprm[];
+}
+export interface DecodedDocCharacterRun extends ParsedDocCharacterRun {
+	readonly directUnderline: 'none' | 'single' | 'double' | undefined;
 }
 type Prl = { opcode: number; operand: number[]; at: number };
 type PhysicalRun = { start: number; end: number; blob: number; blobEnd: number; prls: Prl[] };
-type MappedRun = ParsedDocCharacterRun & { physical: PhysicalRun; prm: number };
+type MappedRun = DecodedDocCharacterRun & { physical: PhysicalRun; prm: number };
 const LIMIT = 65_536;
 const SAFE_OPERANDS = new Set([
 	0x0835, 0x0836, 0x0837, 0x0838, 0x0839, 0x083a, 0x083b, 0x083c,
@@ -90,6 +93,7 @@ function inspect(input: Uint8Array) {
 	const chpx = parseBteTable(doc.tableBytes, fib.plcfbteChpx), papx = parseBteTable(doc.tableBytes, fib.plcfbtePapx);
 	papx.pns = papx.pns.map((pn) => pn & 0x3fffff);
 	const physical = parsePhysicalRuns(word, chpx), runs: MappedRun[] = [];
+	const snapshots = new Map<PhysicalRun, readonly DocSprm[]>();
 	for (const piece of pieces) {
 		if (piece.cpStart >= fib.ccpText) break;
 		const unit = piece.compressed ? 1 : 2, stop = Math.min(piece.cpEnd, fib.ccpText);
@@ -110,10 +114,16 @@ function inspect(input: Uint8Array) {
 			const kul = underline.length === 1 ? underline[0]!.operand[0] : undefined;
 			const size = row.prls.filter((p) => p.opcode === 0x4a43);
 			const halfPoints = size.length === 1 ? size[0]!.operand[0]! + size[0]!.operand[1]! * 256 : undefined;
+			// Piece aliases share immutable physical exceptions instead of multiplying allocations.
+			let sprms = snapshots.get(row);
+			if (!sprms) {
+				sprms = Object.freeze(row.prls.map((p) => Object.freeze({ opcode: p.opcode, operand: Object.freeze(p.operand.slice()) })));
+				snapshots.set(row, sprms);
+			}
 			runs.push({ cpStart: cp, cpEnd: end, text: text.slice(cp, end), directBold: direct(0x0835), directItalic: direct(0x0836),
 				directUnderline: piece.prm === 0 && row.prls.every((p) => SAFE_OPERANDS.has(p.opcode)) ? kul === 0 ? 'none' : kul === 1 ? 'single' : kul === 3 ? 'double' : undefined : undefined,
 				directFontSizePoints: piece.prm === 0 && halfPoints !== undefined && halfPoints >= 2 && halfPoints <= 3276 && row.prls.every((p) => SAFE_OPERANDS.has(p.opcode)) ? halfPoints / 2 : undefined,
-				sprms: Object.freeze(row.prls.map((p) => Object.freeze({ opcode: p.opcode, operand: Object.freeze(p.operand.slice()) }))), physical: row, prm: piece.prm });
+				sprms, physical: row, prm: piece.prm });
 			fc += (end - cp) * unit; cp = end;
 		}
 	}
@@ -121,7 +131,7 @@ function inspect(input: Uint8Array) {
 }
 
 /** Direct exceptions only; absence means inherited/unknown, never false. */
-export function readDocCharacterRuns(input: Uint8Array): readonly ParsedDocCharacterRun[] {
+export function readDocCharacterRuns(input: Uint8Array): readonly DecodedDocCharacterRun[] {
 	return Object.freeze(inspect(input).runs.map(({ physical: _physical, prm: _prm, ...run }) => Object.freeze(run)));
 }
 

@@ -2,9 +2,10 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DocDocument } from '../src/doc-document.js';
 import { unwrapDocBytes } from '../src/ole-document-doc-cfb.js';
-import { readDocFib } from '../src/ole-document-doc-fib.js';
+import { readDocFib, patchDocFib } from '../src/ole-document-doc-fib.js';
+import { buildClxBytes } from '../src/ole-document-doc-pieces.js';
 import { parseBteTable } from '../src/ole-document-doc-fkp.js';
-import { writeDocCharacterRunUnderline } from '../src/ole-document-doc-runs.js';
+import { writeDocCharacterRunUnderline, readDocCharacterRuns } from '../src/ole-document-doc-runs.js';
 function prepared(variant = 'valid') {
  const input = new Uint8Array(readFileSync(new URL('./fixtures/doc/rich-runs.doc', import.meta.url)));
  const cfb = unwrapDocBytes(input)!, word = cfb.wordDocBytes.slice(), fib = readDocFib(word);
@@ -69,6 +70,16 @@ describe('existing exclusive DOC underline',()=>{
   for(let i=0;i<pages;i++){const page=base+i*512;tv.setUint32(fc+(pages+1)*4+i*4,page/512,true);wv.setInt32(page,2048+i*2,true);wv.setInt32(page+4,2050+i*2,true);word[page+8]=5;word[page+10]=255;word[page+511]=1;for(let j=0;j<85;j++)word.set([0x35,8,0],page+11+j*3);}
   const descriptor=fib.fibRgFcLcbOffset+12*8;wv.setUint32(descriptor,fc,true);wv.setUint32(descriptor+4,pages*8+4,true);
   const input=cfb.rewrap(word,table), doc=new DocDocument(input);expect(()=>doc.paragraphs[1]!.runs).toThrow('unsupported-formatting');expect(()=>writeDocCharacterRunUnderline(input,23,32,'double')).toThrow('Formatting SPRM limit');expect(doc.dirty).toBe(false);expect(Buffer.compare(Buffer.from(doc.serialize()),Buffer.from(input))).toBe(0);
+ });
+ it('shares frozen formatting snapshots across sixty thousand piece aliases and refuses their writes',()=>{
+  const cfb=unwrapDocBytes(prepared())!, fib=readDocFib(cfb.wordDocBytes), n=60000, base=Math.ceil(cfb.wordDocBytes.length/512)*512, page=base+512;
+  const word=new Uint8Array(base+1024);word.set(cfb.wordDocBytes);word[base]=66;const wv=new DataView(word.buffer);
+  wv.setInt32(page,base,true);wv.setInt32(page+4,base+1,true);word[page+8]=5;word[page+10]=255;word[page+511]=1;
+  for(let j=0;j<85;j++)word.set(j===0?[0x3e,0x2a,1]:[0x36,8,0],page+11+j*3);
+  const clx=buildClxBytes(Array.from({length:n},(_,i)=>({cpStart:i,cpEnd:i+1,fc:base,compressed:true,flagsWord:0,prm:0})));
+  const bteFc=cfb.tableBytes.length, clxFc=bteFc+12, table=new Uint8Array(clxFc+clx.length);table.set(cfb.tableBytes);table.set(clx,clxFc);const tv=new DataView(table.buffer);tv.setInt32(bteFc,base,true);tv.setInt32(bteFc+4,base+1,true);tv.setUint32(bteFc+8,page/512,true);
+  patchDocFib(word,fib,{ccpText:n,cbMac:word.length,clx:{fc:clxFc,lcb:clx.length},plcfbteChpx:{fc:bteFc,lcb:12},plcfbtePapx:fib.plcfbtePapx});
+  const input=cfb.rewrap(word,table), runs=readDocCharacterRuns(input);expect(runs).toHaveLength(n);expect(new Set(runs.map(r=>r.sprms)).size).toBe(1);expect(runs[0]!.sprms).toHaveLength(85);expect(Object.isFrozen(runs[0]!.sprms)).toBe(true);expect(Object.isFrozen(runs[0]!.sprms[0]!.operand)).toBe(true);expect(()=>{(runs[0]!.sprms[0]!.operand as number[])[0]=3;}).toThrow();expect(runs[n-1]!.directUnderline).toBe('single');expect(()=>writeDocCharacterRunUnderline(input,0,1,'double')).toThrow('shared-formatting');
  });
  it('validates low-level inputs before inspection',()=>{for(const value of ['wavy',0,null])expect(()=>writeDocCharacterRunUnderline(new Uint8Array(),0,1,value as never)).toThrow('invalid-formatting');});
 });
