@@ -12,8 +12,8 @@ export class VsdError extends Error {
 export interface VsdTransform { pinX: number; pinY: number; width: number; height: number; localPinX: number; localPinY: number; angle: number; flipX: boolean; flipY: boolean }
 export interface VsdGeometry { readonly kind: 'moveTo' | 'lineTo'; readonly id: number; readonly x: number; readonly y: number }
 export interface VsdRecordLocation { block: VsdBlock; offset: number; length: number }
-export interface VsdShapeData { id: number; kind: 'shape' | 'group' | 'foreign'; coordinateSpace: 'shape-local'; parentId?: number; masterPageId?: number; masterShapeId?: number; unsupportedGeometry: boolean; unsafeTransform: boolean; text?: string; transform?: VsdTransform; geometry: VsdGeometry[]; textRecord?: VsdRecordLocation; transformRecord?: VsdRecordLocation; unsafeText: boolean }
-export interface VsdPageData { id: number; background: boolean; width?: number; height?: number; scale?: number; shapes: VsdShapeData[] }
+export interface VsdShapeData { childShapeIds?: readonly number[]; shapeOrderIssue?: string; id: number; kind: 'shape' | 'group' | 'foreign'; coordinateSpace: 'shape-local'; parentId?: number; masterPageId?: number; masterShapeId?: number; unsupportedGeometry: boolean; unsafeTransform: boolean; text?: string; transform?: VsdTransform; geometry: VsdGeometry[]; textRecord?: VsdRecordLocation; transformRecord?: VsdRecordLocation; unsafeText: boolean }
+export interface VsdPageData { topLevelShapeIds?: readonly number[]; shapeOrderIssue?: string; id: number; background: boolean; width?: number; height?: number; scale?: number; shapes: VsdShapeData[] }
 export interface VsdBlock { offset: number; length: number; format: number; type: number; bytes: Uint8Array; parent?: VsdBlock; pointerOffset: number }
 export interface VsdDrawingData { stream: Uint8Array; streamPath: string[]; version: 11; pages: VsdPageData[]; blocks: VsdBlock[]; writable: boolean }
 export const VSD_MAX_BYTES = 64 * 1024 * 1024;
@@ -41,6 +41,9 @@ export function readVsdDrawing(input: Uint8Array): VsdDrawingData {
  const size = header.getUint32(28, true);
  if (size < 54 || size > stream.length) throw new VsdError('document-size');
  const data: VsdDrawingData = { stream, streamPath, version: 11, pages: [], blocks: [], writable: true };
+ interface ShapeOrder { owner?: VsdShapeData; elements:number[]; ids:Map<number,number>; issue?:string; level:number }
+ const shapeOrders=new Map<VsdPageData,Map<VsdShapeData|undefined,ShapeOrder>>(),sheetIds=new Map<VsdPageData,number|undefined>();
+ let orderElements=0;
  const active = new Set<number>(), seen = new Set<number>(); let decodedBudget = MAX_BYTES, records = 0;
  function visit(ownerBytes: Uint8Array, pointerOffset: number, parent?: VsdBlock, page?: VsdPageData, shape?: VsdShapeData, depth = 0, id = 0): void {
   if (depth > 64 || ++records > 100000) throw new VsdError('traversal-limit');
@@ -78,7 +81,7 @@ export function readVsdDrawing(input: Uint8Array): VsdDrawingData {
    }
    for (const idx of indexes) visit(bytes, table + 12 + idx * 18, block, page, shape, depth + 1, idx);
   } else if (page && [8, 12, 13].includes(mode)) {
-   const stack: { level: number; shape: VsdShapeData }[] = [];
+   const stack: { level: number; shape: VsdShapeData }[] = [],orderStack:ShapeOrder[]=[];
    // Compressed chunk streams begin directly with their first chunk header;
    // only compressed blob/pointer-table streams have the four-byte prefix.
    let cursor = 0;
@@ -97,6 +100,33 @@ export function readVsdDrawing(input: Uint8Array): VsdDrawingData {
     while (stack.length && level <= stack[stack.length - 1]!.level) stack.pop();
     let current = stack[stack.length - 1]?.shape ?? shape;
     if(current && [0x46,0x4a].includes(chunk)) throw new VsdError('unsupported-sheet-owner');
+    while(orderStack.length&&level<=orderStack[orderStack.length-1]!.level)orderStack.pop();
+    if(page&&chunk===0x46){
+     if(sheetIds.has(page))page.shapeOrderIssue='ambiguous-page-owner';
+     sheetIds.set(page,length>=54&&level===1&&[10,18,26].every(o=>cv.getUint32(start+o,true)===0xffffffff)?chunkId:undefined);
+    }
+    if(page&&chunk===0x65){
+     const orders=shapeOrders.get(page)??new Map<VsdShapeData|undefined,ShapeOrder>();shapeOrders.set(page,orders);
+     const order:ShapeOrder={owner:current,elements:[],ids:new Map(),level};
+     if(orders.has(current))order.issue='duplicate-shape-order';orders.set(current,order);orderStack.push(order);
+     // ShapeList child data may span its eight-byte trailer, but the final
+     // v11 four-byte separator is not child-order storage.
+     const end=start+length+trailer-4;
+     if(end-start<8)order.issue='shape-order-bounds';
+     else{const subHeader=cv.getUint32(start,true),childrenBytes=cv.getUint32(start+4,true),children=start+8+subHeader;
+      if(children>end||childrenBytes>end-children||childrenBytes%4)order.issue='shape-order-bounds';
+      else{const count=childrenBytes/4;orderElements+=count;if(orderElements>100000)throw new VsdError('shape-order-budget');
+       const seen=new Set<number>();for(let i=0;i<count;i++){const id=cv.getUint32(children+i*4,true);if(seen.has(id))order.issue='duplicate-order-element';seen.add(id);order.elements.push(id);}
+      }
+     }
+    }
+    if(page&&chunk===0x83){const order=orderStack[orderStack.length-1];
+     if(!order)page.shapeOrderIssue='orphan-shape-id';
+     else if(level!==order.level+1)order.issue='shape-id-owner-level';
+     else if(length<4)order.issue='shape-id-bounds';
+     else if(order.ids.has(chunkId))order.issue='duplicate-shape-id-map';
+     else order.ids.set(chunkId,cv.getUint32(start,true));
+    }
     if (page && [0x47,0x48,0x4e].includes(chunk)) {
      current = { id: chunkId, kind: chunk === 0x47 ? 'group' : chunk === 0x4e ? 'foreign' : 'shape', coordinateSpace:'shape-local', unsupportedGeometry: false, unsafeTransform: false, geometry: [], unsafeText: false };
      if(length<54) throw new VsdError('shape-header');
@@ -138,5 +168,39 @@ export function readVsdDrawing(input: Uint8Array): VsdDrawingData {
  if (!data.pages.length) throw new VsdError('no-decoded-pages');
  const pageIds = new Set<number>();
  for (const page of data.pages) { if(pageIds.has(page.id)) throw new VsdError('duplicate-page-id'); pageIds.add(page.id); const ids = new Set<number>(); for (const shape of page.shapes) { if (ids.has(shape.id)) throw new VsdError('duplicate-shape-id'); ids.add(shape.id); } }
+ for(const page of data.pages){
+  const shapes=new Map(page.shapes.map(s=>[s.id,s])),orders=shapeOrders.get(page),sheet=sheetIds.get(page);
+  if(sheet!==undefined&&shapes.has(sheet))page.shapeOrderIssue='ambiguous-page-owner';
+  const rootParent=(s:VsdShapeData)=>s.parentId===0xffffffff||sheet!==undefined&&s.parentId===sheet;
+  const rootIds=new Set<number>(),childrenByParent=new Map<number,Set<number>>(),emptyIds=new Set<number>();
+  for(const shape of page.shapes){if(rootParent(shape))rootIds.add(shape.id);if(shape.parentId!==undefined){const children=childrenByParent.get(shape.parentId)??new Set<number>();children.add(shape.id);childrenByParent.set(shape.parentId,children);}}
+  const resolve=(owner:VsdShapeData|undefined):number[]|undefined=>{
+   const order=orders?.get(owner);let issue=order?.issue;
+   if(!order)issue='missing-shape-order';
+   if(owner&&owner.kind!=='group'&&order?.elements.length)issue='unsupported-child-owner';
+   const result:number[]=[],seen=new Set<number>();
+   if(order&&!issue){for(const element of order.elements){const id=order.ids.get(element),shape=id===undefined?undefined:shapes.get(id);
+    if(!shape){issue='unresolved-shape-id';break;}
+    if(seen.has(id!)){issue='duplicate-shape-reference';break;}seen.add(id!);
+    if(owner?shape.parentId!==owner.id:!rootParent(shape)){issue='contradictory-shape-owner';break;}result.push(id!);
+   }
+   if(!issue){const expected=owner?childrenByParent.get(owner.id)??emptyIds:rootIds;if(expected.size!==result.length||[...expected].some(id=>!seen.has(id)))issue='incomplete-shape-order';}
+   }
+   if(issue){if(owner)owner.shapeOrderIssue=issue;else page.shapeOrderIssue??=issue;return undefined;}
+   return result;
+  };
+  const root=resolve(undefined);for(const shape of page.shapes)if(shape.kind==='group'||orders?.has(shape))shape.childShapeIds=resolve(shape);
+  let issue=page.shapeOrderIssue;const queue=(root??[]).map(id=>({id,depth:0})),visited=new Set<number>();
+  if(root&&!issue){for(let i=0;i<queue.length;i++){const item=queue[i]!;
+   if(item.depth>64){issue='shape-order-depth';break;}
+   if(visited.has(item.id)){issue='cyclic-shape-order';break;}visited.add(item.id);
+   const shape=shapes.get(item.id)!;if(shape.shapeOrderIssue){issue='unresolved-child-order';break;}
+   for(const id of shape.childShapeIds??[])queue.push({id,depth:item.depth+1});
+  }
+  if(!issue&&visited.size!==page.shapes.length)issue='unreachable-shape-order';
+  }
+  if(issue){page.shapeOrderIssue=issue;for(const shape of page.shapes)if(shape.childShapeIds){shape.childShapeIds=undefined;shape.shapeOrderIssue??='unresolved-page-order';}}
+  else page.topLevelShapeIds=root;
+ }
  return data;
 }

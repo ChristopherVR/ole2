@@ -17,11 +17,17 @@ export class VsdShape {
  set text(value: string) { this.#editText(value); }
  get transform(): Readonly<VsdTransform> | undefined { const value=this.#read().transform; return value && Object.freeze({...value}); }
  set transform(value: VsdTransform) { this.#editTransform(value); }
+ /** Validated drawing order of this owner's explicit children; undefined when unresolved. */
+ get childShapeIds():readonly number[]|undefined {const ids=this.#read().childShapeIds;return ids&&Object.freeze([...ids]);}
+ get shapeOrderIssue():string|undefined{return this.#read().shapeOrderIssue;}
  get geometry(): readonly VsdGeometry[] { return Object.freeze(this.#read().geometry.map(row=>Object.freeze({...row}))); }
 }
 export class VsdPage {
  readonly shapes: readonly VsdShape[]; #read:()=>VsdDrawingData['pages'][number];
  constructor(readonly id: number, shapes: VsdShape[], read: ()=>VsdDrawingData['pages'][number]) {this.#read=read;this.shapes=Object.freeze(shapes); Object.freeze(this); }
+ /** Validated top-level drawing order. The existing shapes array remains flat. */
+ get topLevelShapeIds():readonly number[]|undefined {const ids=this.#read().topLevelShapeIds;return ids&&Object.freeze([...ids]);}
+ get shapeOrderIssue():string|undefined{return this.#read().shapeOrderIssue;}
  get background(): boolean { return this.#read().background; }
  get width(): number | undefined { return this.#read().width; }
  get height(): number | undefined { return this.#read().height; }
