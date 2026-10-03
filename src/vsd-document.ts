@@ -37,16 +37,19 @@ export class VsdDocument extends Ole2DocumentBase {
  get capabilities(): Ole2DocumentCapabilities {return CAPABILITIES;}
  constructor(input: Uint8Array) {
   super(validateVsdInput(input)); this.#drawing=readVsdDrawing(this.getBytes());
-  this.#pages=Object.freeze(this.#drawing.pages.map(page=>new VsdPage(page.id,page.shapes.map(shape=>new VsdShape(shape.id,()=>this.#shape(page.id,shape.id),text=>this.#edit(()=>replaceVsdShapeText(this.getBytes(),page.id,shape.id,text)),value=>this.#editTransform(page.id,shape.id,value))),()=>this.#page(page.id))));
+  this.#pages=Object.freeze(this.#drawing.pages.map(page=>new VsdPage(page.id,page.shapes.map(shape=>new VsdShape(shape.id,()=>this.#shape(page.id,shape.id),text=>this.#edit(()=>replaceVsdShapeText(this.getBytes(),page.id,shape.id,text),'invalid-text'),value=>this.#editTransform(page.id,shape.id,value))),()=>this.#page(page.id))));
  }
  #page(id:number) {const page=this.#drawing.pages.find(p=>p.id===id);if(!page)throw new VsdError('stale-page');return page;}
  #shape(pageId:number,id:number) {const shape=this.#page(pageId).shapes.find(s=>s.id===id);if(!shape)throw new VsdError('stale-shape');return shape;}
  #editTransform(pageId:number,shapeId:number,value:VsdTransform):void {
-  this.#edit(()=>replaceVsdShapeTransform(this.getBytes(),pageId,shapeId,value));
+  this.#edit(()=>replaceVsdShapeTransform(this.getBytes(),pageId,shapeId,value),'invalid-transform');
  }
- #edit(prepare:()=>Uint8Array):void {
+ #edit(prepare:()=>Uint8Array,invalidReason:'invalid-text'|'invalid-transform'):void {
   try {const revision=this.revision,candidate=prepare();if(this.revision!==revision)throw new VsdError('reentrant-edit');this.#commit(candidate);}
-  catch(error){if(error instanceof VsdError)throw new UnsupportedOle2EditError(error.reason);throw error;}
+  catch(error){
+   if(error instanceof UnsupportedOle2EditError)throw error;
+   throw new UnsupportedOle2EditError(error instanceof VsdError?error.reason:error instanceof TypeError?invalidReason:'edit-failed');
+  }
  }
  #commit(candidate:Uint8Array):void {
   const drawing=readVsdDrawing(candidate);
