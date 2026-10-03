@@ -1,5 +1,24 @@
 # Native Visio COM gate, 2026-10-03
 
+## Bounded text writing in 0.10.0
+
+The production text writer now compresses eligible edits into the original leaf
+allocation, preserving all page/table offsets. The owned native fixture's
+`Hello\n\n` to `World\n\n` output SHA256 is
+`cc257f441f2d30fb30ea9b0281fcf4570c092532518a4894a28fee4ae9bf3bdb`.
+Visio 16 opens it and its native save/reopen; the captured target text changes
+from `Hello\n` to `World\n` and all other captured fields stay unchanged.
+This is positive evidence for that text case. Native transform editing and
+rendering remain separate unverified work.
+
+After building, `node scripts/prepare-native-vsd-text-edits.mjs` reproduces the
+exact output and records module hashes. Run `native-visio-snapshot.ps1` against
+the original and output, using an explicit target-text delta; the generation
+driver itself does not launch or validate Visio. Capacity, field, overlap and
+resource-budget refusals preserve bytes and state.
+
+## Historical corruption and containment
+
 Microsoft Visio **16.0.20430.20140, AMD64** accepted the repository-owned
 `test/fixtures/vsd/native-visio16-v11.vsd`. The fixture SHA256 is
 `c6c97822e7bb2cc3e96da9d7d35fe74ac16a7f2c90d19ad4c80967d2896e0974`.

@@ -114,7 +114,8 @@ error values while retaining captured formatting, anchors and other sheets.
 `slide.notesDiagnostic` explains unsupported notes. For present notes,
 `slide.notes.texts` exposes validated text atoms, including their `role`,
 `encoding` and `editRefusal`. Only an eligible `'body'` atom accepts a same-length
-UTF-16 replacement with supported controls/codepage and no rich runs or mirrors.
+UTF-16 replacement with supported controls/codepage. Rich-run modifications and
+mirrors remain unsupported; existing run records stay unchanged.
 Unknown fields remain readable where validated and preserved. Malformed notes
 do not prevent a valid slide model from opening. Overlapping live objects or
 save-history metadata refuse writes. Native PowerPoint comparisons cover ASCII
