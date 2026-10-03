@@ -3,11 +3,12 @@ import { Ole2DocumentBase, UnsupportedOle2EditError } from './ole2-document-base
 import { editPptSlideText, readPptSlideTexts, type PptTextAtom } from './legacy-ppt-text.js';
 import { readPptSlideShapes, type PptShapeRecord, type PptShapeBounds } from './legacy-ppt-shape-reader.js';
 import { editPptShapeBounds } from './legacy-ppt-shape-edit.js';
+import { readPptSlideNotes, editPptNotesText, type PptSlideNotes, type PptNoteTextAtom } from './legacy-ppt-notes.js';
 
 const PPT_CAPABILITIES = Object.freeze({
-	read: Object.freeze(['active-slide-ids', 'active-outline-and-inline-text', 'text-encoding', 'active-shape-ids-and-flags', 'primitive-shape-kind', 'explicit-anchor-geometry', 'validated-inline-shape-text', 'opaque-streams']),
-	write: Object.freeze(['existing-text-fixed-utf16-length', 'unmirrored-top-level-small-anchor-bounds']),
-	limitations: Object.freeze(['unresolved-outline-shape-text', 'rich-text-runs', 'notes', 'variable-length-text', 'OOXML-mirrored-text-and-shapes', 'group-transforms-and-geometry', 'large-anchor-writes', 'inherited-rotated-or-flipped-geometry', 'animations', 'masters', 'embedded-objects']),
+	read: Object.freeze(['active-slide-ids', 'active-outline-and-inline-text', 'text-encoding', 'active-shape-ids-and-flags', 'primitive-shape-kind', 'explicit-anchor-geometry', 'validated-inline-shape-text', 'active-notes-identities-and-inline-text', 'opaque-streams']),
+	write: Object.freeze(['existing-text-fixed-utf16-length', 'unmirrored-top-level-small-anchor-bounds', 'existing-notes-body-fixed-utf16-length']),
+	limitations: Object.freeze(['unresolved-outline-shape-text', 'rich-text-runs', 'notes-creation-and-inherited-fields', 'variable-length-text', 'OOXML-mirrored-text-and-shapes', 'group-transforms-and-geometry', 'large-anchor-writes', 'inherited-rotated-or-flipped-geometry', 'animations', 'masters', 'embedded-objects']),
 });
 
 /** An active text atom, not a shape or a fully decoded rich-text paragraph. */
@@ -45,11 +46,44 @@ export class PptSlide {
 	/** Flat OfficeArt preorder, including group descendants with parentGroupId.
 	 * Canvas patriarchs/background structures remain preserved outside this list. */
 	readonly shapes: readonly PptShape[];
-	constructor(slideId: number, persistId: number, texts: readonly PptText[], shapes: readonly PptShape[] = []) {
+	/** Existing active notes; undefined when the slide has a null notes reference. */
+	readonly notes: PptNotes | undefined;
+	readonly notesStatus: 'present' | 'absent' | 'unsupported';
+	/** A decode refusal is distinct from a null notes reference. Bytes remain opaque. */
+	readonly notesDiagnostic: string | undefined;
+	constructor(slideId: number, persistId: number, texts: readonly PptText[], shapes: readonly PptShape[] = [], notes?: PptNotes, notesDiagnostic?: string) {
 		this.slideId = slideId; this.persistId = persistId;
-		this.texts = Object.freeze([...texts]); this.shapes = Object.freeze([...shapes]); Object.freeze(this);
+		this.texts = Object.freeze([...texts]); this.shapes = Object.freeze([...shapes]); this.notes = notes;
+		this.notesDiagnostic = notesDiagnostic; this.notesStatus = notesDiagnostic ? 'unsupported' : notes ? 'present' : 'absent'; Object.freeze(this);
 	}
-	get notes(): never { throw new UnsupportedOle2EditError('PPT notes are preserved but are not decoded by this adapter'); }
+}
+
+/** One existing inline notes text slot; body is a validated PT_NotesBody, not a
+ * guessed shape index. Other placeholders/fields are readable but not writable. */
+export class PptNoteText {
+	readonly shapeId: number; readonly headerOffset: number;
+	#read: () => PptNoteTextAtom; #write: (text: string) => void;
+	constructor(atom: PptNoteTextAtom, read: () => PptNoteTextAtom, write: (text: string) => void) {
+		this.shapeId = atom.shapeId; this.headerOffset = atom.headerOffset;
+		this.#read = read; this.#write = write; Object.freeze(this);
+	}
+	get text(): string { return this.#read().text; }
+	set text(value: string) { if (typeof value !== 'string') throw new UnsupportedOle2EditError('Notes replacement must be a string'); this.#write(value); }
+	get role(): PptNoteTextAtom['role'] { return this.#read().role; }
+	get placeholderId(): number | undefined { return this.#read().placeholderId; }
+	get encoding(): PptNoteTextAtom['encoding'] { return this.#read().encoding; }
+	get editRefusal(): string | undefined { return this.#read().editRefusal; }
+	get runs(): never { throw new UnsupportedOle2EditError('PPT notes rich-text runs are preserved but not decoded'); }
+}
+export class PptNotes {
+	readonly slideId: number; readonly slidePersistId: number;
+	readonly notesId: number; readonly persistId: number;
+	readonly texts: readonly PptNoteText[];
+	constructor(record: PptSlideNotes, texts: readonly PptNoteText[]) {
+		this.slideId = record.slideId; this.slidePersistId = record.slidePersistId;
+		this.notesId = record.notesId; this.persistId = record.persistId;
+		this.texts = Object.freeze([...texts]); Object.freeze(this);
+	}
 }
 
 /** A preserved OfficeArt shape. Bounds are exact master units (1/8 point),
@@ -100,6 +134,7 @@ export class PptDocument extends Ole2DocumentBase {
 	readonly #slides: readonly PptSlide[];
 	readonly #unsupported: readonly string[];
 	#shapeCache: { revision: number; slides: ReturnType<typeof readPptSlideShapes> };
+	#notesCache: { revision: number; notes: PptSlideNotes[] };
 	get slides(): readonly PptSlide[] { return this.#slides; }
 	get unsupported(): readonly string[] { return this.#unsupported; }
 
@@ -107,14 +142,40 @@ export class PptDocument extends Ole2DocumentBase {
 		super(input);
 		const shapeModel = readPptSlideShapes(this.getBytes());
 		const model = readPptSlideTexts(this.getBytes());
+		let notesModel: PptSlideNotes[] = [], notesDiagnostic: string | undefined;
+		try { notesModel = readPptSlideNotes(this.getBytes()); }
+		catch (error) { notesDiagnostic = error instanceof Error ? error.message : 'Notes decoding unsupported'; }
 		this.#shapeCache = { revision: this.revision, slides: shapeModel };
-		this.#unsupported = Object.freeze(['formatting', 'group-transforms', 'pictures-content', 'masters', 'notes', 'animations', 'embedded-objects', 'unresolved-outline-shape-text', 'variable-length-text']);
+		this.#notesCache = { revision: this.revision, notes: notesModel };
+		this.#unsupported = Object.freeze(['formatting', 'group-transforms', 'pictures-content', 'masters', 'notes-creation-and-inherited-fields', 'animations', 'embedded-objects', 'unresolved-outline-shape-text', 'variable-length-text', ...(notesDiagnostic ? ['notes-decoding'] : [])]);
 		this.#slides = Object.freeze(model.slides.map((slide, index) => {
 			const texts = slide.texts.map((atom, textIndex) => new PptText({ slideId: slide.slideId, persistId: slide.persistId, textIndex }, atom, (node, value) => this.#edit(node, value)));
 			const shapes = shapeModel[index]!.shapes.map(record => new PptShape(slide, record, record.textIndexes.map(textIndex => texts[textIndex]!),
 				() => this.#readShape(slide.slideId, slide.persistId, record), value => this.#editShape(slide.slideId, slide.persistId, record, value)));
-			return new PptSlide(slide.slideId, slide.persistId, texts, shapes);
+			const record = notesModel.find(note => note.slideId === slide.slideId && note.slidePersistId === slide.persistId);
+			const notes = record && new PptNotes(record, record.texts.map(atom => new PptNoteText(atom,
+				() => this.#readNote(record, atom), value => this.#editNote(record, atom, value))));
+			return new PptSlide(slide.slideId, slide.persistId, texts, shapes, notes, notesDiagnostic);
 		}));
+	}
+
+	#readNote(original: PptSlideNotes, atom: PptNoteTextAtom): PptNoteTextAtom {
+		if (this.#notesCache.revision !== this.revision) {
+			try { this.#notesCache = { revision: this.revision, notes: readPptSlideNotes(this.getBytes()) }; }
+			catch (error) { throw new UnsupportedOle2EditError(error instanceof Error ? error.message : 'Notes decoding unsupported'); }
+		}
+		const notes = this.#notesCache.notes.filter(note => note.slideId === original.slideId && note.slidePersistId === original.slidePersistId && note.notesId === original.notesId && note.persistId === original.persistId && note.headerOffset === original.headerOffset);
+		const matches = notes.length === 1 ? notes[0]!.texts.filter(text => text.shapeId === atom.shapeId && text.headerOffset === atom.headerOffset && text.shapeHeaderOffset === atom.shapeHeaderOffset && text.encoding === atom.encoding && text.placeholderId === atom.placeholderId) : [];
+		if (matches.length !== 1) throw new UnsupportedOle2EditError('PPT notes identity no longer matches or is ambiguous');
+		return matches[0]!;
+	}
+	#editNote(note: PptSlideNotes, atom: PptNoteTextAtom, text: string): void {
+		const revision = this.revision, current = this.#readNote(note, atom);
+		const result = editPptNotesText(this.getBytes(), { slideId: note.slideId, slidePersistId: note.slidePersistId, notesId: note.notesId, persistId: note.persistId,
+			shapeId: atom.shapeId, expectedHeaderOffset: atom.headerOffset, expectedText: current.text, text });
+		if (this.revision !== revision) throw new UnsupportedOle2EditError('Document changed during notes edit');
+		if (result.status === 'unsupported') throw new UnsupportedOle2EditError(result.reason);
+		if (result.status === 'edited') this.commitBytes(result.bytes);
 	}
 
 	#readShape(slideId: number, persistId: number, original: PptShapeRecord): PptShapeRecord {

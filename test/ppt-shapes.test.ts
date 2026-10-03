@@ -94,6 +94,11 @@ describe('active preserved OfficeArt shape model', () => {
 			const packed = view.getUint32(pos, true); pos += 4;
 			for (let i = 0; i < packed >>> 20; i++, pos += 4) if ((packed & 0xfffff) + i === slides[1]!.persistId) view.setUint32(pos, chain.directory.get(slides[0]!.persistId)!, true);
 		}
+		// Isolate the anchor alias; duplicated live notes linkage is separately
+		// invalid now that notes identities are decoded.
+		const slide = readRecordOrThrow(view, chain.directory.get(slides[0]!.persistId)!);
+		const atom = pptShapeChildren(view, slide).find(record => record.recType === 0x03ef)!;
+		view.setUint32(atom.dataOffset + 16, 0, true);
 		const shared = replaceCompoundFileStream(input, ['PowerPoint Document'], stream), doc = new PptDocument(shared), shape = doc.slides[0]!.shapes[0]!;
 		expect(() => { shape.x += 8; }).toThrow(/shared/); expect(doc.serialize()).toEqual(shared); expect(doc.revision).toBe(0);
 	});

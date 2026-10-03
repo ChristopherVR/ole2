@@ -4,7 +4,7 @@ import { PptDocument } from '../src/ppt-document.js';
 import { UnsupportedOle2EditError } from '../src/ole2-document-base.js';
 import { editPptSlideText, readPptSlideTexts } from '../src/legacy-ppt-text.js';
 import { readCompoundFileStream, replaceCompoundFileStream } from '../src/ole2-stream-edit.js';
-import { HEADER_TOKEN_ENCRYPTED } from '../src/legacy-ppt-record-types.js';
+import { HEADER_TOKEN_ENCRYPTED, RT } from '../src/legacy-ppt-record-types.js';
 import { buildPptFile } from '../src/legacy-ppt-writer.js';
 import { buildPersistDirectory } from '../src/ppt/persist-directory.js';
 import { readRecordOrThrow } from '../src/legacy-ppt-record-stream.js';
@@ -64,11 +64,11 @@ describe('PptDocument active text model', () => {
 		expect(() => Object.defineProperty(node, 'slideId', { value: 999 })).toThrow();
 		expect(() => Object.defineProperty(slide, 'texts', { value: [] })).toThrow();
 		expect(slide.shapes.map(shape => shape.shapeId)).toEqual([14338, 14339, 14340]);
-		expect(() => slide.notes).toThrow(UnsupportedOle2EditError);
+		expect(slide.notes?.texts.some(text => text.role === 'body')).toBe(true);
 		expect(() => node.runs).toThrow(UnsupportedOle2EditError);
 		expect(doc.unsupported).toContain('unresolved-outline-shape-text');
 		expect(doc.capabilities.write).toContain('existing-text-fixed-utf16-length');
-		expect(doc.capabilities.limitations).toContain('notes');
+		expect(doc.capabilities.limitations).toContain('notes-creation-and-inherited-fields');
 		expect(Reflect.set(doc, 'kind', 'xls')).toBe(false);
 		expect(Reflect.set(doc, 'capabilities', {})).toBe(false);
 		expect(Reflect.set(doc, 'slides', [])).toBe(false);
@@ -93,6 +93,14 @@ describe('PptDocument active text model', () => {
 		for (let pos = directory.dataOffset; pos < directory.dataOffset + directory.recLen;) {
 			const packed = view.getUint32(pos, true), start = packed & 0xfffff, count = packed >>> 20; pos += 4;
 			for (let i = 0; i < count; i++, pos += 4) if (start + i === second.persistId) view.setUint32(pos, chain.directory.get(first.persistId)!, true);
+		}
+		// This test isolates text aliasing. Null the shared physical slide's notes
+		// link; duplicating a live notes link is independently malformed linkage.
+		const slideRecord = readRecordOrThrow(view, chain.directory.get(first.persistId)!);
+		for (let pos = slideRecord.dataOffset; pos < slideRecord.dataOffset + slideRecord.recLen;) {
+			const record = readRecordOrThrow(view, pos);
+			if (record.recType === RT.SlideAtom) view.setUint32(record.dataOffset + 16, 0, true);
+			pos = record.dataOffset + record.recLen;
 		}
 		const shared = replaceCompoundFileStream(input, ['PowerPoint Document'], stream), doc = new PptDocument(shared);
 		const a = doc.slides[0]!.texts[0]!, b = doc.slides[1]!.texts[0]!;
