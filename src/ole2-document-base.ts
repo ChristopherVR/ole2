@@ -35,10 +35,12 @@ export abstract class Ole2DocumentBase implements Ole2File {
  get entries(): Ole2DirectoryEntry[] {
   return this.#container.entries.map(entry => ({...entry, clsid: new Uint8Array(entry.clsid)}));
  }
- getStream(name: string): Uint8Array | undefined {
+ readonly #getStream = (name: string): Uint8Array | undefined => {
   const bytes = this.#container.getStream(name);
   return bytes === undefined ? undefined : new Uint8Array(bytes);
- }
+ };
+ /** Retain the original detachable callback API while observing current state. */
+ get getStream(): Ole2File['getStream'] { return this.#getStream; }
  /** Isolated working input: codecs cannot accidentally mutate current state. */
  protected getBytes(): Uint8Array { return new Uint8Array(this.#bytes); }
  /** Validate a candidate before changing any owned state. No-op stays clean. */
