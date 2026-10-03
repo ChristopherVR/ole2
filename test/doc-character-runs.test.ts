@@ -105,4 +105,17 @@ describe('DOC native character runs and exclusive formatting edits', () => {
 		new DataView(malformed.word.buffer).setInt32(bte.pns[0]! * 512 + 4, 0, true);
 		expect(() => readDocCharacterRuns(malformed.cfb.rewrap(malformed.word, malformed.cfb.tableBytes))).toThrow();
 	});
+
+	it('preflights CHPX and PAPX descriptor counts before allocating BTE arrays', () => {
+		for (const index of [12, 13]) {
+			const { cfb, word, fib } = layout();
+			new DataView(word.buffer).setUint32(fib.fibRgFcLcbOffset + index * 8 + 4, 65_537 * 8 + 4, true);
+			const input = cfb.rewrap(word, cfb.tableBytes);
+			expect(() => readDocCharacterRuns(input)).toThrow('Formatting table limit');
+			const doc = new DocDocument(input);
+			expect(() => doc.paragraphs[1]!.runs).toThrow(UnsupportedOle2EditError);
+			expect(doc.serialize()).toStrictEqual(input);
+			expect(doc.dirty).toBe(false);
+		}
+	});
 });

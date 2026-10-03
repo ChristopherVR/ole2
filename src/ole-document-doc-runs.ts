@@ -81,6 +81,9 @@ function inspect(input: Uint8Array) {
 	const total = pieces.at(-1)?.cpEnd ?? 0;
 	if (total < fib.ccpText || total > fib.ccpText + fib.ccpOtherStories + 1) throw new Error('Invalid story lengths');
 	const text = decodePiecesText(word, pieces, fib.ccpText);
+	// Preflight both descriptor counts before parseBteTable allocates its arrays.
+	if (fib.plcfbteChpx.lcb > LIMIT * 8 + 4 || fib.plcfbtePapx.lcb > LIMIT * 8 + 4)
+		throw new Error('Formatting table limit');
 	const chpx = parseBteTable(doc.tableBytes, fib.plcfbteChpx), papx = parseBteTable(doc.tableBytes, fib.plcfbtePapx);
 	const physical = parsePhysicalRuns(word, chpx), runs: MappedRun[] = [];
 	for (const piece of pieces) {
