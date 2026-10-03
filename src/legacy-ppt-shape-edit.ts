@@ -1,6 +1,8 @@
 /** Fixed-record geometry edits; no drawing reconstruction or property loss. */
 import { readCompoundFileStream, replaceCompoundFileStream } from './ole2-stream-edit.js';
 import { readPptSlideShapes, type PptShapeBounds } from './legacy-ppt-shape-reader.js';
+import { readRecordOrThrow, PptParseError } from './legacy-ppt-record-stream.js';
+import { buildPersistDirectory, parseUserEditAtom } from './ppt/persist-directory.js';
 
 export type PptShapeEditResult =
 	| { status: 'edited' | 'unchanged'; bytes: Uint8Array }
@@ -8,6 +10,36 @@ export type PptShapeEditResult =
 
 export function equalPptShapeBounds(a: PptShapeBounds, b: PptShapeBounds): boolean {
 	return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+/** The entire slide must not also belong to an opaque live persist object or
+ * save-chain metadata. Inspecting other visible shapes alone misses aliases. */
+function slideOwnershipRefusal(input: Uint8Array, stream: Uint8Array, persistId: number): string | undefined {
+	const user = readCompoundFileStream(input, ['Current User']);
+	if (!user) throw new PptParseError('Missing Current User stream');
+	const view = new DataView(stream.buffer, stream.byteOffset, stream.byteLength), uv = new DataView(user.buffer, user.byteOffset, user.byteLength);
+	const cu = readRecordOrThrow(uv, 0), editOffset = uv.getUint32(cu.dataOffset + 8, true);
+	const { directory } = buildPersistDirectory(view, editOffset), ownedOffset = directory.get(persistId);
+	if (ownedOffset === undefined) return 'Missing active slide persist object';
+	const owned = readRecordOrThrow(view, ownedOffset), start = owned.headerOffset, end = owned.dataOffset + owned.recLen;
+	if (end > view.byteLength) return 'Unbounded slide persist object';
+	const overlaps = (offset: number): boolean => {
+		const other = readRecordOrThrow(view, offset), otherEnd = other.dataOffset + other.recLen;
+		if (otherEnd > view.byteLength) throw new PptParseError('Unbounded live persist object prevents safe geometry edit');
+		return start < otherEnd && other.headerOffset < end;
+	};
+	for (const [id, offset] of directory) {
+		if (id !== persistId && overlaps(offset)) return 'Slide container overlaps another live persist object';
+	}
+	const visited = new Set<number>();
+	for (let offset = editOffset; offset;) {
+		if (visited.has(offset) || visited.size >= 10000) return 'Invalid geometry save-history ownership';
+		visited.add(offset);
+		const edit = parseUserEditAtom(view, offset);
+		if (overlaps(offset) || overlaps(edit.offsetPersistDirectory)) return 'Slide container overlaps save-history metadata';
+		offset = edit.offsetLastEdit;
+	}
+	return undefined;
 }
 
 /** Bounds use exact master units (1/8 point). Only existing, untransformed,
@@ -43,7 +75,10 @@ export function editPptShapeBounds(input: Uint8Array, edit: {
 		}
 		const edges = [next.y, next.x, next.x + next.width, next.y + next.height];
 		if (!edges.every(value => Number.isSafeInteger(value) && value >= -32768 && value <= 32767)) return reject('Geometry exceeds the existing small anchor encoding');
-		const stream = readCompoundFileStream(input, ['PowerPoint Document'])!, out = stream.slice(), view = new DataView(out.buffer);
+		const stream = readCompoundFileStream(input, ['PowerPoint Document'])!;
+		const ownership = slideOwnershipRefusal(input, stream, persistId);
+		if (ownership) return reject(ownership);
+		const out = stream.slice(), view = new DataView(out.buffer);
 		for (let i = 0; i < edges.length; i++) view.setInt16(anchor + 8 + i * 2, edges[i]!, true);
 		const bytes = replaceCompoundFileStream(input, ['PowerPoint Document'], out);
 		if (bytes === input) return reject('Compound stream cannot be safely replaced');
