@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DocDocument } from '../src/doc-document.js';
+import { parseDoc } from '../src/index.js';
 import { UnsupportedOle2EditError } from '../src/ole2-document-base.js';
 import { unwrapDocBytes } from '../src/ole-document-doc-cfb.js';
 import { readDocFib } from '../src/ole-document-doc-fib.js';
@@ -34,6 +35,17 @@ function prepared(variant = 'valid') {
 }
 
 describe('exclusive direct DOC font size', () => {
+	it('edits the owned native Word size fixture through the primary model API and restores all bytes', () => {
+		const input = new Uint8Array(readFileSync(new URL('./fixtures/doc/rich-size-runs.doc', import.meta.url)));
+		const doc = parseDoc(input), paragraph = doc.paragraphs[1]!;
+		expect(paragraph.runs[0]!.directFontSizePoints).toBe(18);
+		for (const size of [12, 13.5, 130, 1, 1638, 18]) {
+			paragraph.runs[0]!.directFontSizePoints = size;
+			expect(parseDoc(doc.serialize()).paragraphs[1]!.runs[0]!.directFontSizePoints).toBe(size);
+		}
+		expect(doc.serialize()).toStrictEqual(input);
+	});
+
 	it('changes only the two-byte operand, refreshes raw SPRMs and preserves text and all other bytes', () => {
 		const input = prepared(), doc = new DocDocument(input), paragraph = doc.paragraphs[1]!, run = paragraph.runs[0]!;
 		expect(run.text).toBe('Bold text');
@@ -70,6 +82,8 @@ describe('exclusive direct DOC font size', () => {
 		const object = { valueOf() { coercions++; doc.paragraphs[0]!.text = 'Other plain paragraph.'; return 13.5; } };
 		for (const value of [undefined, NaN, Infinity, -Infinity, 0.5, 1638.5, 13.25, '13.5', null, object]) {
 			expect(() => { run.directFontSizePoints = value as number; }).toThrow(UnsupportedOle2EditError);
+			try { run.directFontSizePoints = value as number; }
+			catch (error) { expect(error).toMatchObject({ name: 'UnsupportedOle2EditError', reason: 'invalid-formatting' }); }
 			expect(doc.serialize()).toStrictEqual(input);
 			expect(doc.dirty).toBe(false);
 		}
