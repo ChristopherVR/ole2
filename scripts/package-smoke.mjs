@@ -50,6 +50,7 @@ const installed = JSON.parse(
 assert.equal(installed.name, '@christophervr/ole2');
 await writeFile(join(directory, 'fixture.xls'), await readFile(new URL('../test/fixtures/xls/workbook-features.xls', import.meta.url)));
 await writeFile(join(directory, 'fixture.doc'), await readFile(new URL('../test/fixtures/doc/main-field.doc', import.meta.url)));
+await writeFile(join(directory, 'fixture-size.doc'), await readFile(new URL('../test/fixtures/doc/rich-size-runs.doc', import.meta.url)));
 await writeFile(join(directory, 'fixture.ppt'), await readFile(new URL('../test/fixtures/ppt/native-text.ppt', import.meta.url)));
 await writeFile(join(directory, 'fixture.vsd'), await readFile(new URL('../test/fixtures/vsd/owned-v11.vsd', import.meta.url)));
 await writeFile(
@@ -58,6 +59,12 @@ await writeFile(
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseDoc, parseXls, parsePpt, parseVsd, parseCompoundFile, Ole2DocumentError } from '@christophervr/ole2';
+const sizedDoc = parseDoc(readFileSync(new URL('./fixture-size.doc', import.meta.url)));
+const sizedRun = sizedDoc.paragraphs.flatMap(p => p.runs ?? []).find(r => r.directFontSizePoints === 18);
+assert(sizedRun);
+sizedRun.directFontSizePoints = 13.5;
+assert(parseDoc(sizedDoc.serialize()).paragraphs.flatMap(p => p.runs ?? []).some(r => r.directFontSizePoints === 13.5));
+assert.throws(() => { sizedRun.directFontSizePoints = 13.25; });
 import { editXlsPreservedStringCell, readXlsWorkbook } from '@christophervr/ole2';
 import { editXlsPreservedStringCell as subpathStringEditor } from '@christophervr/ole2/legacy-excel-preserved-string-cell';
 import { buildOle2, parseOle2, readCompoundFileStream, replaceCompoundFileStream, resizeCompoundFileStream, readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, editXlsNumericCell, editXlsStringCell, readPptSlideTexts, editPptSlideText, tryWriteOleDocParagraphEdit } from '@christophervr/ole2';
@@ -158,6 +165,8 @@ parseDoc(input).paragraphs.push({index: 0, text: 'new'});
 parseXls(input).kind = 'doc';
 void compatible; void checked; void inferred; void parsePpt;
 void checkedVsd;
+const sizeHandle = parseDoc(input).paragraphs[0]?.runs?.[0];
+if (sizeHandle) sizeHandle.directFontSizePoints = 13.5;
 const fib: DocFib = {
   flags1Offset: 10, flags1: 0, tableStreamName: '1Table', cbMacOffset: 64,
   cbMac: 4096, ccpTextOffset: 76, ccpText: 0, plcfbteChpx: { fc: 0, lcb: 0 },
