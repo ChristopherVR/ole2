@@ -6,14 +6,17 @@
  * Companion to `ole-document-docx-editor.ts` (the modern `.docx` editor):
  * same public shape (`readOleDocParagraphs` / `writeOleDocParagraphEdit`,
  * `-Doc-` naming to keep the two apart), very different mechanics, because
- * `.doc` has no XML body to patch. Ground truth for every structure this
- * module reads or writes was a real Word-COM-authored `.doc`, dumped and
- * decoded byte-by-byte against [MS-DOC] (see module docs on
+ * `.doc` has no XML body to patch. Structures follow [MS-DOC], with fixture
+ * regression tests and independent Word checks for the covered edit strategies
+ * (see module docs on
  * `ole-document-doc-fib.ts`, `-pieces.ts`, `-fkp.ts`, `-cfb.ts`).
  *
  * ## Write strategy (why it is safe)
  *
- * A `.doc` edit never rewrites existing bytes in place: it APPENDS the new
+ * Equal-length edits that fit each original piece's encoding patch only the
+ * target text bytes, preserving every original run and CP-keyed feature table.
+ * Structural target paragraphs (fields, objects, table/section marks) are refused.
+ * Otherwise an edit APPENDS the new
  * paragraph text (plus a fresh paragraph mark) as a brand-new "piece" at the
  * end of the `WordDocument` stream, together with a brand-new single-run
  * PAPX/CHPX formatting page copied VERBATIM from the edited paragraph's own
@@ -26,15 +29,19 @@
  *
  * ## Scope limits (checked, not assumed)
  *
- * Only edits a document whose only populated character-position-keyed table
+ * Character-count-changing edits require a document whose only populated character-position-keyed table
  * is the (mandatory, always present) section table `PlcfSed`, which this
  * module updates correctly for any number of sections. A document that also
  * uses footnotes, comments/annotations, fields, or bookmarks is left
- * UNCHANGED (`writeOleDocParagraphEdit` returns the original bytes): those
+ * UNCHANGED (`writeOleDocParagraphEdit` returns the original bytes; the
+ * `tryWriteOleDocParagraphEdit` API returns an explicit rejection reason): those
  * features add their own character-position-keyed tables that a paragraph
  * edit's character-count shift would silently invalidate, and this module
- * has not been verified against a real Word round trip for that case. Reading
- * (`readOleDocParagraphs`) has no such restriction.
+ * has not been verified against a real Word round trip for that case. Non-main
+ * stories and drawing/anchor tables are also guarded. The flat CFB rebuild
+ * refuses nested storage containers for growing streams; CP-stable edits use
+ * the hierarchy-preserving CFB patcher. Encrypted/unsupported FIBs are unreadable.
+ * Reading (`readOleDocParagraphs`) otherwise has no editing feature restriction.
  *
  * @module ole-document-doc-editor
  */
@@ -54,18 +61,22 @@ import {
 	decodePiecesText,
 	encodePieceText,
 	parsePieceTable,
+	parseDocClx,
 	replacePieceRange,
 } from './ole-document-doc-pieces.js';
 import type { DocPiece } from './ole-document-doc-pieces.js';
+import { encodeCp1252 } from './ole-document-doc-cp1252.js';
 
 /** [MS-DOC] 2.5.3 `FibRgFcLcb97` indices for features this editor refuses to edit around (see module doc). */
-const RISKY_PLCF_INDICES = [3, 4, 5, 16, 17, 18, 19, 20]; // fndTxt, andRef, andTxt, fld{Mom,Hdr,Ftn,Atn,Mcr}
+const RISKY_PLCF_INDICES = [2, 3, 4, 5, 16, 17, 18, 19, 20, 40, 41, 42, 43, 46, 47, 48, 54, 55, 56, 57, 58, 59];
 const RISKY_STTB_INDICES = [21, 22, 23]; // bkmk sttb, bkf, bkl
 
 function hasUnsupportedFeatures(wordDoc: Uint8Array, fib: DocFib): boolean {
+	if (fib.ccpOtherStories > 0) return true;
 	// A trivial/empty PLCF is still (n+1)*4 = 4 bytes (a single sentinel CP);
 	// anything larger means the document actually uses the feature.
 	for (const index of RISKY_PLCF_INDICES) {
+		if (index >= fib.fibRgFcLcbCount) continue;
 		if (readFcLcbAt(wordDoc, fib, index).lcb > 4) {
 			return true;
 		}
@@ -103,6 +114,13 @@ function paragraphBoundaries(bodyText: string): number[] {
 	return boundaries;
 }
 
+function encodePieceTextUtf16(text: string): Uint8Array {
+	const bytes = new Uint8Array(text.length * 2);
+	const view = new DataView(bytes.buffer);
+	for (let i = 0; i < text.length; i++) view.setUint16(i * 2, text.charCodeAt(i), true);
+	return bytes;
+}
+
 /** Read every main-body paragraph's plain text (paragraph mark excluded) from an embedded `.doc` payload. */
 export function readOleDocParagraphs(docBytes: Uint8Array): string[] | undefined {
 	try {
@@ -112,7 +130,10 @@ export function readOleDocParagraphs(docBytes: Uint8Array): string[] | undefined
 		}
 		const fib = readDocFib(cfb.wordDocBytes);
 		const pieces = parsePieceTable(cfb.tableBytes, fib.clx);
-		const fullText = decodePiecesText(cfb.wordDocBytes, pieces);
+		const totalCp = pieces.at(-1)?.cpEnd ?? 0;
+		if (totalCp > fib.ccpText + fib.ccpOtherStories + 1) return undefined;
+		const fullText = decodePiecesText(cfb.wordDocBytes, pieces, fib.ccpText);
+		if (fullText.length < fib.ccpText) return undefined;
 		const bodyText = fullText.slice(0, fib.ccpText);
 		const boundaries = paragraphBoundaries(bodyText);
 		let start = 0;
@@ -136,7 +157,9 @@ function shiftSectionTableCps(
 	delta: number,
 ): void {
 	const view = new DataView(tableBytes.buffer, tableBytes.byteOffset, tableBytes.byteLength);
-	const n = Math.floor((sed.lcb - 4) / (4 + 12));
+	if (sed.lcb < 4 || (sed.lcb - 4) % 16 !== 0 || sed.fc > tableBytes.length - sed.lcb)
+		throw new Error('Invalid section table');
+	const n = (sed.lcb - 4) / 16;
 	for (let i = 0; i <= n; i++) {
 		const off = sed.fc + i * 4;
 		const cp = view.getInt32(off, true);
@@ -158,33 +181,84 @@ export function writeOleDocParagraphEdit(
 	paragraphIndex: number,
 	text: string,
 ): Uint8Array {
+	return tryWriteOleDocParagraphEdit(docBytes, paragraphIndex, text).bytes;
+}
+
+/** Explicit edit outcome; rejected edits always retain the original input bytes. */
+export type OleDocParagraphEditResult =
+	| { status: 'edited'; bytes: Uint8Array; strategy: 'preserved-runs' | 'piece-append' }
+	| { status: 'rejected'; bytes: Uint8Array; reason: 'invalid-payload' | 'unsupported-container' |
+		'unsupported-features' | 'invalid-paragraph-index' | 'invalid-text' | 'invalid-document' };
+
+/** Apply the same paragraph edit as the compatibility API, with an explicit rejection reason. */
+export function tryWriteOleDocParagraphEdit(
+	docBytes: Uint8Array,
+	paragraphIndex: number,
+	text: string,
+): OleDocParagraphEditResult {
+	const rejected = (reason: Extract<OleDocParagraphEditResult, { status: 'rejected' }>['reason']): OleDocParagraphEditResult =>
+		({ status: 'rejected', bytes: docBytes, reason });
+	if (!Number.isInteger(paragraphIndex) || paragraphIndex < 0) return rejected('invalid-paragraph-index');
+	if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(text)) return rejected('invalid-text');
 	try {
 		const cfb = unwrapDocBytes(docBytes);
 		if (!cfb) {
-			return docBytes;
+			return rejected('invalid-payload');
 		}
 		const fib = readDocFib(cfb.wordDocBytes);
-		if (hasUnsupportedFeatures(cfb.wordDocBytes, fib)) {
-			return docBytes;
-		}
-
-		const pieces = parsePieceTable(cfb.tableBytes, fib.clx);
-		const fullText = decodePiecesText(cfb.wordDocBytes, pieces);
+		const { pieces, prcBytes } = parseDocClx(cfb.tableBytes, fib.clx);
+		const totalCp = pieces.at(-1)?.cpEnd ?? 0;
+		if (totalCp > fib.ccpText + fib.ccpOtherStories + 1) return rejected('invalid-document');
+		const fullText = decodePiecesText(cfb.wordDocBytes, pieces, fib.ccpText);
+		if (fullText.length < fib.ccpText) return rejected('invalid-document');
 		const bodyText = fullText.slice(0, fib.ccpText);
 		const boundaries = paragraphBoundaries(bodyText);
 		const paragraphEndCp = boundaries[paragraphIndex];
 		if (paragraphEndCp === undefined) {
-			return docBytes;
+			return rejected('invalid-paragraph-index');
 		}
 		const paragraphStartCp = paragraphIndex === 0 ? 0 : boundaries[paragraphIndex - 1]!;
+		if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(bodyText.slice(paragraphStartCp, paragraphEndCp)))
+			return rejected('unsupported-features');
+		const sanitizedText = text.replaceAll(/[\r\n]+/gu, ' ');
+		// A CP-stable replacement can retain every piece, formatting run and CP-keyed
+		// feature table, including features outside this paragraph. Only plain target
+		// paragraphs qualify, and compressed pieces must retain their encoding.
+		if (sanitizedText.length + 1 === paragraphEndCp - paragraphStartCp && bodyText[paragraphEndCp - 1] === '\r') {
+			const replacement = `${sanitizedText}\r`;
+			const patched = cfb.wordDocBytes.slice();
+			let canPatch = true;
+			for (const piece of pieces) {
+				const start = Math.max(paragraphStartCp, piece.cpStart);
+				const end = Math.min(paragraphEndCp, piece.cpEnd);
+				if (start >= end) continue;
+				const part = replacement.slice(start - paragraphStartCp, end - paragraphStartCp);
+				const unit = piece.compressed ? 1 : 2;
+				const fc = piece.fc + (start - piece.cpStart) * unit;
+				const fcEnd = fc + part.length * unit;
+				// Fast-save pieces can alias physical text; do not alter another logical range.
+				if (pieces.some((other) => other !== piece && other.fc < fcEnd &&
+					other.fc + (other.cpEnd - other.cpStart) * (other.compressed ? 1 : 2) > fc)) {
+					canPatch = false; break;
+				}
+				const encoded = piece.compressed ? encodeCp1252(part) : encodePieceTextUtf16(part);
+				if (!encoded) { canPatch = false; break; }
+				patched.set(encoded, fc);
+			}
+			if (canPatch) return { status: 'edited', strategy: 'preserved-runs', bytes: cfb.rewrap(patched, cfb.tableBytes) };
+		}
+		if (!cfb.canRewrite) return rejected('unsupported-container');
+		if (hasUnsupportedFeatures(cfb.wordDocBytes, fib)) return rejected('unsupported-features');
 
 		const { piece: startPiece, fc: startFc } = pieceAndFcAtCp(pieces, paragraphStartCp);
+		if (pieces.some((piece) => piece.cpStart < paragraphEndCp && piece.cpEnd > paragraphStartCp && piece.prm !== startPiece.prm))
+			return rejected('unsupported-features');
+		const { fc: paragraphMarkFc } = pieceAndFcAtCp(pieces, paragraphEndCp - 1);
 		const papxBte = parseBteTable(cfb.tableBytes, fib.plcfbtePapx);
 		const chpxBte = parseBteTable(cfb.tableBytes, fib.plcfbteChpx);
-		const papxBlob = extractPapxBlob(cfb.wordDocBytes, papxBte, startFc);
+		const papxBlob = extractPapxBlob(cfb.wordDocBytes, papxBte, paragraphMarkFc);
 		const chpxBlob = extractChpxBlob(cfb.wordDocBytes, chpxBte, startFc);
 
-		const sanitizedText = text.replaceAll(/[\r\n]+/gu, ' ');
 		const { bytes: textBytes, compressed } = encodePieceText(`${sanitizedText}\r`);
 
 		const originalLen = cfb.wordDocBytes.length;
@@ -226,11 +300,12 @@ export function writeOleDocParagraphEdit(
 			compressed,
 			charLength: sanitizedText.length + 1,
 			flagsWord: startPiece.flagsWord,
+			prm: startPiece.prm,
 		});
 		const delta = sanitizedText.length + 1 - (paragraphEndCp - paragraphStartCp);
 		const newCcpText = fib.ccpText + delta;
 
-		const clxBytes = buildClxBytes(newPieces);
+		const clxBytes = buildClxBytes(newPieces, prcBytes);
 		const papxBteBytes = buildBteTableBytes(newPapxBte);
 		const chpxBteBytes = buildBteTableBytes(newChpxBte);
 
@@ -258,8 +333,8 @@ export function writeOleDocParagraphEdit(
 			plcfbtePapx: newPapxBteFcLcb,
 		});
 
-		return cfb.rewrap(newWordDoc, newTableBytes);
+		return { status: 'edited', strategy: 'piece-append', bytes: cfb.rewrap(newWordDoc, newTableBytes) };
 	} catch {
-		return docBytes;
+		return rejected('invalid-document');
 	}
 }

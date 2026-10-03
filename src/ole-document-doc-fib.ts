@@ -45,12 +45,15 @@ export interface DocFib {
 	/** Byte offset of `FibRgLw97.ccpText` (main document character count). */
 	ccpTextOffset: number;
 	ccpText: number;
+	/** Populated non-main stories require CP tables this editor cannot safely update. */
+	ccpOtherStories: number;
 	plcfbteChpx: FcLcb;
 	plcfbtePapx: FcLcb;
 	sed: FcLcb;
 	clx: FcLcb;
 	/** Byte offset of the `FibRgFcLcb97` array, for locating each pair's own offset when patching. */
 	fibRgFcLcbOffset: number;
+	fibRgFcLcbCount: number;
 }
 
 /** `fComplex` bit (bit 2) of `FibBase.flags1`. Set once this module has performed an incremental (piece-append) edit. */
@@ -68,9 +71,12 @@ export function readDocFib(wordDoc: Uint8Array): DocFib {
 	if (wIdent !== 0xa5ec) {
 		throw new Error('Not a WordDocument FIB (bad wIdent)');
 	}
+	if (![0x00c1, 0x00d9, 0x0101, 0x010c, 0x0112].includes(view.getUint16(2, true)))
+		throw new Error('Unsupported Word FIB version');
 
 	const flags1Offset = 0xa;
 	const flags1 = view.getUint16(flags1Offset, true);
+	if ((flags1 & 0x8100) !== 0) throw new Error('Encrypted or obfuscated Word document');
 	const fWhichTblStm = (flags1 >> 9) & 0x1;
 
 	const csw = view.getUint16(0x20, true);
@@ -80,6 +86,13 @@ export function readDocFib(wordDoc: Uint8Array): DocFib {
 	const fibRgLw97Offset = cslwOffset + 2;
 	const cbRgFcLcbCountOffset = fibRgLw97Offset + cslw * 4;
 	const fibRgFcLcbOffset = cbRgFcLcbCountOffset + 2;
+	const fibRgFcLcbCount = view.getUint16(cbRgFcLcbCountOffset, true);
+	if (csw < 14 || cslw < 22 || fibRgFcLcbCount < 34 ||
+		fibRgFcLcbOffset + fibRgFcLcbCount * 8 > wordDoc.length)
+		throw new Error('Truncated Word FIB arrays');
+	const ccpText = view.getInt32(fibRgLw97Offset + 12, true);
+	const otherStories = [4, 5, 7, 8, 9, 10].map((i) => view.getInt32(fibRgLw97Offset + i * 4, true));
+	if (ccpText < 0 || otherStories.some((cp) => cp < 0)) throw new Error('Negative Word story length');
 
 	function fcLcbPair(index: number): FcLcb {
 		const off = fibRgFcLcbOffset + index * 8;
@@ -96,12 +109,14 @@ export function readDocFib(wordDoc: Uint8Array): DocFib {
 		cbMacOffset,
 		cbMac: view.getUint32(cbMacOffset, true),
 		ccpTextOffset,
-		ccpText: view.getInt32(ccpTextOffset, true),
+		ccpText,
+		ccpOtherStories: otherStories.reduce((sum, cp) => sum + cp, 0),
 		plcfbteChpx: fcLcbPair(FC_LCB_INDEX.plcfbteChpx),
 		plcfbtePapx: fcLcbPair(FC_LCB_INDEX.plcfbtePapx),
 		sed: fcLcbPair(FC_LCB_INDEX.sed),
 		clx: fcLcbPair(FC_LCB_INDEX.clx),
 		fibRgFcLcbOffset,
+		fibRgFcLcbCount,
 	};
 }
 
@@ -117,6 +132,8 @@ function fcLcbFieldOffset(fib: DocFib, key: 'plcfbteChpx' | 'plcfbtePapx' | 'clx
  * fields/bookmarks" gate).
  */
 export function readFcLcbAt(wordDoc: Uint8Array, fib: DocFib, index: number): FcLcb {
+	if (!Number.isInteger(index) || index < 0 || index >= fib.fibRgFcLcbCount)
+		throw new Error('FIB fc/lcb index outside declared array');
 	const view = new DataView(wordDoc.buffer, wordDoc.byteOffset, wordDoc.byteLength);
 	const off = fib.fibRgFcLcbOffset + index * 8;
 	return { fc: view.getUint32(off, true), lcb: view.getUint32(off + 4, true) };

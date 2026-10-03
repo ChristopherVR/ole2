@@ -34,10 +34,15 @@ export interface BteTable {
 /** Parse a `PlcBtePapx`/`PlcBteChpx` at `(fc, lcb)` in a table stream. */
 export function parseBteTable(tableStream: Uint8Array, at: { fc: number; lcb: number }): BteTable {
 	const view = new DataView(tableStream.buffer, tableStream.byteOffset, tableStream.byteLength);
-	const n = Math.floor((at.lcb - 4) / (4 + 4));
+	if (!Number.isInteger(at.fc) || !Number.isInteger(at.lcb) || at.fc < 0 || at.lcb < 4 ||
+		(at.lcb - 4) % 8 !== 0 || at.fc > tableStream.length - at.lcb)
+		throw new Error('Invalid BTE table bounds');
+	const n = (at.lcb - 4) / 8;
 	const fcs: number[] = [];
 	for (let i = 0; i <= n; i++) {
-		fcs.push(view.getInt32(at.fc + i * 4, true));
+		const fc = view.getInt32(at.fc + i * 4, true);
+		if (fc < 0 || (i > 0 && fc <= fcs[i - 1]!)) throw new Error('Invalid BTE FC boundaries');
+		fcs.push(fc);
 	}
 	const pns: number[] = [];
 	for (let i = 0; i < n; i++) {
@@ -85,7 +90,9 @@ export function extractPapxBlob(wordDoc: Uint8Array, papxBte: BteTable, fc: numb
 	const rangeIndex = findBteRangeIndex(papxBte, fc);
 	const pageOffset = papxBte.pns[rangeIndex]! * PAGE_SIZE;
 	const page = wordDoc.subarray(pageOffset, pageOffset + PAGE_SIZE);
+	if (page.length !== PAGE_SIZE) throw new Error('Truncated PAPX page');
 	const crun = page[PAGE_SIZE - 1]!;
+	if (crun === 0 || (crun + 1) * 4 + crun * 13 > 511) throw new Error('Invalid PAPX run count');
 	const pageView = new DataView(page.buffer, page.byteOffset, page.byteLength);
 	const rgbxOffset = (crun + 1) * 4;
 	for (let i = 0; i < crun; i++) {
@@ -93,8 +100,12 @@ export function extractPapxBlob(wordDoc: Uint8Array, papxBte: BteTable, fc: numb
 		const runFcEnd = pageView.getInt32((i + 1) * 4, true);
 		if (fc >= runFcStart && fc < runFcEnd) {
 			const bOffsetWord = page[rgbxOffset + i * 13]!;
+			if (bOffsetWord === 0) return new Uint8Array(); // [MS-DOC] BxPap default properties.
 			const blobOffset = bOffsetWord * 2;
-			return page.slice(blobOffset, blobOffset + papxBlobLength(page, blobOffset));
+			const blobLength = papxBlobLength(page, blobOffset);
+			if (blobOffset < rgbxOffset + crun * 13 || !Number.isInteger(blobLength) || blobOffset + blobLength > 511)
+				throw new Error('Invalid PAPX blob bounds');
+			return page.slice(blobOffset, blobOffset + blobLength);
 		}
 	}
 	throw new Error(`FC ${fc} is not covered by any run in PAPX page ${papxBte.pns[rangeIndex]}`);
@@ -105,7 +116,9 @@ export function extractChpxBlob(wordDoc: Uint8Array, chpxBte: BteTable, fc: numb
 	const rangeIndex = findBteRangeIndex(chpxBte, fc);
 	const pageOffset = chpxBte.pns[rangeIndex]! * PAGE_SIZE;
 	const page = wordDoc.subarray(pageOffset, pageOffset + PAGE_SIZE);
+	if (page.length !== PAGE_SIZE) throw new Error('Truncated CHPX page');
 	const crun = page[PAGE_SIZE - 1]!;
+	if (crun === 0 || (crun + 1) * 4 + crun > 511) throw new Error('Invalid CHPX run count');
 	const pageView = new DataView(page.buffer, page.byteOffset, page.byteLength);
 	const rgbOffset = (crun + 1) * 4;
 	for (let i = 0; i < crun; i++) {
@@ -118,6 +131,8 @@ export function extractChpxBlob(wordDoc: Uint8Array, chpxBte: BteTable, fc: numb
 			}
 			const blobOffset = bOffsetWord * 2;
 			const cb = page[blobOffset]!;
+			if (blobOffset < rgbOffset + crun || blobOffset + 1 + cb > 511)
+				throw new Error('Invalid CHPX blob bounds');
 			return page.slice(blobOffset, blobOffset + 1 + cb);
 		}
 	}
@@ -135,8 +150,11 @@ export function buildSingleRunPapxPage(
 	view.setInt32(0, fcStart, true);
 	view.setInt32(4, fcEnd, true);
 	const blobByteOffset = 22; // (crun+1)*4 + crun*13 = 21, rounded up to the next even (word) offset.
-	page[8] = blobByteOffset / 2;
-	page.set(blob, blobByteOffset);
+	if (blob.length > 511 - blobByteOffset) throw new Error('PAPX blob exceeds page capacity');
+	if (blob.length > 0) {
+		page[8] = blobByteOffset / 2;
+		page.set(blob, blobByteOffset);
+	}
 	page[PAGE_SIZE - 1] = 1;
 	return page;
 }
@@ -153,6 +171,7 @@ export function buildSingleRunChpxPage(
 	view.setInt32(4, fcEnd, true);
 	if (blob.length > 0) {
 		const blobByteOffset = 10; // (crun+1)*4 + crun*1 = 9, rounded up to the next even (word) offset.
+		if (blob.length > 511 - blobByteOffset) throw new Error('CHPX blob exceeds page capacity');
 		page[8] = blobByteOffset / 2;
 		page.set(blob, blobByteOffset);
 	}

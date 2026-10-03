@@ -34,19 +34,45 @@ export function parsePieceTable(
 	tableStream: Uint8Array,
 	clx: { fc: number; lcb: number },
 ): DocPiece[] {
+	return parseDocClx(tableStream, clx).pieces;
+}
+
+/** CLX formatting records are opaque; retain their order because Prm1 refers to their indices. */
+export interface DocClx {
+	pieces: DocPiece[];
+	/** Complete serialized Prc records preceding the Pcdt, including type/length headers. */
+	prcBytes: Uint8Array;
+}
+
+/** Read a bounded CLX, retaining its formatting records ([MS-DOC] 2.9.38, 2.9.216). */
+export function parseDocClx(tableStream: Uint8Array, clx: { fc: number; lcb: number }): DocClx {
 	const view = new DataView(tableStream.buffer, tableStream.byteOffset, tableStream.byteLength);
+	if (!Number.isInteger(clx.fc) || !Number.isInteger(clx.lcb) || clx.fc < 0 || clx.lcb < 5 ||
+		clx.fc > tableStream.length - clx.lcb) throw new Error('Clx is outside the table stream');
 	let off = clx.fc;
 	const end = clx.fc + clx.lcb;
+	let prcCount = 0;
 	while (off < end) {
 		const clxt = view.getUint8(off);
 		if (clxt === CLXT_PRC) {
+			if (off + 3 > end) throw new Error('Truncated Prc header');
 			const cb = view.getUint16(off + 1, true);
+			if (cb > end - off - 3) throw new Error('Prc extends beyond Clx');
 			off += 1 + 2 + cb;
+			prcCount++;
 			continue;
 		}
 		if (clxt === CLXT_PCDT) {
+			if (off + 5 > end) throw new Error('Truncated Pcdt header');
 			const lcb = view.getInt32(off + 1, true);
-			return parsePlcPcd(view, off + 1 + 4, lcb);
+			if (lcb < 4 || (lcb - 4) % 12 !== 0 || lcb !== end - off - 5)
+				throw new Error('Invalid PlcPcd length');
+			const pieces = parsePlcPcd(view, off + 5, lcb);
+			for (const piece of pieces) {
+				if ((piece.prm & 1) !== 0 && (piece.prm >>> 1) >= prcCount)
+					throw new Error('Prm1 references a missing Prc');
+			}
+			return { pieces, prcBytes: tableStream.slice(clx.fc, off) };
 		}
 		throw new Error(`Unrecognised Clx entry type ${clxt} at ${off}`);
 	}
@@ -57,7 +83,10 @@ function parsePlcPcd(view: DataView, plcStart: number, lcb: number): DocPiece[] 
 	const n = Math.floor((lcb - 4) / (4 + 8));
 	const cps: number[] = [];
 	for (let i = 0; i <= n; i++) {
-		cps.push(view.getInt32(plcStart + i * 4, true));
+		const cp = view.getInt32(plcStart + i * 4, true);
+		if ((i === 0 && cp !== 0) || (i > 0 && cp <= cps[i - 1]!))
+			throw new Error('Piece CPs must start at zero and increase');
+		cps.push(cp);
 	}
 	const pcdStart = plcStart + (n + 1) * 4;
 	const pieces: DocPiece[] = [];
@@ -65,6 +94,7 @@ function parsePlcPcd(view: DataView, plcStart: number, lcb: number): DocPiece[] 
 		const pOff = pcdStart + i * 8;
 		const flagsWord = view.getUint16(pOff, true);
 		const fcRaw = view.getUint32(pOff + 2, true);
+		if ((fcRaw & 0x80000000) !== 0) throw new Error('Reserved FcCompressed bit is set');
 		const prm = view.getUint16(pOff + 6, true);
 		const compressed = ((fcRaw >>> 30) & 0x1) === 1;
 		const fcField = fcRaw & 0x3fffffff;
@@ -83,6 +113,9 @@ function parsePlcPcd(view: DataView, plcStart: number, lcb: number): DocPiece[] 
 /** Decode a piece's own character range to a string, reading its bytes from the `WordDocument` stream. */
 function decodePieceText(wordDoc: Uint8Array, piece: DocPiece): string {
 	const charLen = piece.cpEnd - piece.cpStart;
+	const byteLen = charLen * (piece.compressed ? 1 : 2);
+	if (!Number.isInteger(charLen) || charLen < 0 || !Number.isInteger(piece.fc) || piece.fc < 0 ||
+		piece.fc > wordDoc.length - byteLen) throw new Error('Piece text is outside WordDocument');
 	if (piece.compressed) {
 		return decodeCp1252(wordDoc.subarray(piece.fc, piece.fc + charLen));
 	}
@@ -94,9 +127,19 @@ function decodePieceText(wordDoc: Uint8Array, piece: DocPiece): string {
 	return out;
 }
 
-/** Decode the full plain text spanned by a piece list (assumed contiguous, CP 0-based, in order). */
-export function decodePiecesText(wordDoc: Uint8Array, pieces: readonly DocPiece[]): string {
-	return pieces.map((piece) => decodePieceText(wordDoc, piece)).join('');
+/** Decode text, optionally limited to the first maxChars CPs; validate all referenced text ranges. */
+export function decodePiecesText(wordDoc: Uint8Array, pieces: readonly DocPiece[], maxChars?: number): string {
+	if (maxChars !== undefined && (!Number.isInteger(maxChars) || maxChars < 0))
+		throw new Error('Invalid text character limit');
+	const out: string[] = [];
+	for (const piece of pieces) {
+		const bytes = (piece.cpEnd - piece.cpStart) * (piece.compressed ? 1 : 2);
+		if (piece.cpEnd < piece.cpStart || piece.fc < 0 || piece.fc > wordDoc.length - bytes)
+			throw new Error('Piece text is outside WordDocument');
+		const end = Math.min(piece.cpEnd, maxChars ?? piece.cpEnd);
+		if (end > piece.cpStart) out.push(decodePieceText(wordDoc, { ...piece, cpEnd: end }));
+	}
+	return out.join('');
 }
 
 /** Bytes for one new compressed or UTF-16LE piece's text, and which encoding was used. */
@@ -123,7 +166,7 @@ export function replacePieceRange(
 	pieces: readonly DocPiece[],
 	cpStart: number,
 	cpEnd: number,
-	newPiece: { fc: number; compressed: boolean; charLength: number; flagsWord: number },
+	newPiece: { fc: number; compressed: boolean; charLength: number; flagsWord: number; prm?: number },
 ): DocPiece[] {
 	const result: Array<Omit<DocPiece, 'cpStart' | 'cpEnd'> & { charLength: number }> = [];
 	let inserted = false;
@@ -151,7 +194,7 @@ export function replacePieceRange(
 				fc: newPiece.fc,
 				compressed: newPiece.compressed,
 				flagsWord: newPiece.flagsWord,
-				prm: 0,
+				prm: newPiece.prm ?? 0,
 				charLength: newPiece.charLength,
 			});
 			inserted = true;
@@ -172,7 +215,7 @@ export function replacePieceRange(
 			fc: newPiece.fc,
 			compressed: newPiece.compressed,
 			flagsWord: newPiece.flagsWord,
-			prm: 0,
+			prm: newPiece.prm ?? 0,
 			charLength: newPiece.charLength,
 		});
 	}
@@ -192,8 +235,8 @@ export function replacePieceRange(
 	});
 }
 
-/** Serialize a piece list back into a `Clx` (a single `Pcdt`, no `Prc` entries). */
-export function buildClxBytes(pieces: readonly DocPiece[]): Uint8Array {
+/** Serialize pieces and optional verbatim Prc records back into a CLX. */
+export function buildClxBytes(pieces: readonly DocPiece[], prcBytes: Uint8Array = new Uint8Array()): Uint8Array {
 	const n = pieces.length;
 	const plcLcb = (n + 1) * 4 + n * 8;
 	const bytes = new Uint8Array(1 + 4 + plcLcb);
@@ -214,5 +257,10 @@ export function buildClxBytes(pieces: readonly DocPiece[]): Uint8Array {
 		view.setUint16(off + 6, piece.prm, true);
 		off += 8;
 	}
-	return bytes;
+	const result = new Uint8Array(prcBytes.length + bytes.length);
+	result.set(prcBytes);
+	result.set(bytes, prcBytes.length);
+	// Validate both caller-supplied records and references before writing them.
+	parseDocClx(result, { fc: 0, lcb: result.length });
+	return result;
 }
