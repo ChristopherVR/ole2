@@ -25,3 +25,4 @@ export * from './legacy-ppt-writer.js';
 export * from './legacy-excel-workbook.js';
 export * from './legacy-ppt-text.js';
 export * from './legacy-excel-biff8-edit.js';
+export * from './legacy-excel-preserved-string-cell.js';

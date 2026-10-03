@@ -48,10 +48,14 @@ const installed = JSON.parse(
 	await readFile(join(directory, 'node_modules/@christophervr/ole2/package.json'), 'utf8'),
 );
 assert.equal(installed.name, '@christophervr/ole2');
+await writeFile(join(directory, 'fixture.xls'), await readFile(new URL('../test/fixtures/xls/workbook-features.xls', import.meta.url)));
 await writeFile(
 	join(directory, 'verify.mjs'),
 	`
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { editXlsPreservedStringCell, readXlsWorkbook } from '@christophervr/ole2';
+import { editXlsPreservedStringCell as subpathStringEditor } from '@christophervr/ole2/legacy-excel-preserved-string-cell';
 import { buildOle2, parseOle2, readCompoundFileStream, replaceCompoundFileStream, resizeCompoundFileStream, readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, editXlsNumericCell, editXlsStringCell, readPptSlideTexts, editPptSlideText, tryWriteOleDocParagraphEdit } from '@christophervr/ole2';
 import { buildPptFile } from '@christophervr/ole2/legacy-ppt-writer';
 import { readRecord } from '@christophervr/ole2/legacy-ppt-record-stream';
@@ -71,6 +75,12 @@ assert.equal(refused.ok, false);
 assert.equal(refused.bytes, source);
 for (const api of [readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, readRecord, editXlsNumericCell, editXlsStringCell, editPptSlideText, tryWriteOleDocParagraphEdit]) assert.equal(typeof api, 'function');
 assert.equal(subpathTextReader, readPptSlideTexts);
+assert.equal(subpathStringEditor, editXlsPreservedStringCell);
+const workbook = new Uint8Array(readFileSync(new URL('./fixture.xls', import.meta.url)));
+const stringValue = 'Unicode ' + String.fromCodePoint(0x03a9, 0x65e5, 0x1f600);
+const stringEdit = editXlsPreservedStringCell(workbook, {row: 1, col: 0, value: stringValue});
+assert.equal(stringEdit.status, 'edited');
+assert.equal(readXlsWorkbook(stringEdit.bytes).sheets[0].cells.find(cell => cell.row === 1 && cell.col === 0).value, stringValue);
 const invalid = new Uint8Array([1, 2, 3]);
 assert.equal(editXlsNumericCell(invalid, { row: 0, col: 0, value: 1 }).bytes, invalid);
 const ppt = await buildPptFile({ widthEmu: 9144000, heightEmu: 5143500, slides: [{ shapes: [] }], pictures: [] });

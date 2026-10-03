@@ -1,0 +1,43 @@
+# Preservation increment after 0.5.0
+
+This increment extends existing-file edits rather than claiming complete legacy
+Office read/write parity. It is additive to the published 0.5.0 API.
+
+- `resizeCompoundFileStream` preserves nested paths, unknown streams and raw
+  directory metadata while growing/shrinking regular v3 streams. Ambiguous
+  storage ownership and overlapping allocations fail explicitly. Mini resizing,
+  mini/regular transitions, v4 resizing and DIFAT expansion remain unsupported.
+- DOC paragraph growth uses the preserving resizer instead of reconstructing a
+  flat container. Existing character-position feature guards remain enforced.
+  Configurable main-text and piece-processing budgets bound malformed alias
+  expansion before allocation/decoding.
+- `editXlsPreservedStringCell` selects worksheet tabs and preserves old serialized
+  SST/CONTINUE data, rich/phonetic strings, cell tables and formulas. New Unicode
+  entries can span continuation records. Supported BOUNDSHEET/INDEX and ExtSST
+  pointers are updated; unsupported pointer-bearing records are refused.
+  Replacing a rich target creates plain text while preserving its XF and other
+  cells sharing the original string. No formula recalculation is performed.
+- New neutral synthetic PowerPoint and rich-string Excel fixtures have included
+  Office generators and SHA-pinned provenance. No new external fixture is claimed
+  licensed. Historical DOC/PPT provenance remains explicitly unverified.
+
+Integrated validation passed 287 tests across 33 files, frozen installation,
+typecheck, build, independently installed package/API compatibility smoke,
+documentation generation and Pages checks. Nine native Word/Excel/PowerPoint16
+comparisons passed: unchanged stream relocation in each format, nested DOC
+growth, Unicode and 24,000-unit SST edits, rich-string aliases and later-sheet
+selection, and ASCII/UTF-16 edits in the owned PowerPoint fixture. The integrated
+build regenerated all nine exact output hashes checked by native applications.
+
+Native comparisons cover declared semantic fields and selected Excel character
+fonts. They do not establish rendered fidelity, widths, complete DOC runs,
+media/object behavior or all unsupported records. Applications opened explicit
+fixtures read-only with macros disabled; no personal documents or embedded
+objects were activated. Detailed local evidence records input/output/snapshot
+hashes, exact expected changes and these limitations.
+
+Remaining work includes mini/v4 container resizing, richer DOC CP-table updates,
+more XLS record/cell conversions, full PPT models and synchronized mirrors, and
+VSD drawing models/writers. VSD/PUB support remains structural inspection and
+bounded metadata editing. Consumer integration belongs in coordinated follow-up
+work; no cross-repository source was changed here.

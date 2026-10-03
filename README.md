@@ -65,6 +65,8 @@ For an explicit numeric edit outcome, use `editXlsNumericCell(bytes, { worksheet
 
 `editXlsStringCell` provides an explicit outcome for the existing first-worksheet string editor. Continued SSTs, INDEX pointers, unknown cell-region records and complex resizing layouts are rejected. Supported string changes retain existing rich shared-string data and UTF-16 characters. This guarded path is not a general workbook writer.
 
+`editXlsPreservedStringCell(bytes, { worksheetIndex: 1, row: 0, col: 0, value: 'Updated text' })` edits existing LABELSST/RK cells without rebuilding the worksheet tables. It retains original rich/shared strings and continued SST bytes, supports new Unicode strings up to 32,767 UTF-16 units, and updates supported workbook pointers. Replacing a rich target with plain text removes that target's inline rich formatting while retaining its cell format and other aliases. Unsupported records and container layouts return the original bytes with a reason. See [the preservation API guide](docs/xls-preserved-string-edits.md).
+
 ```js
 import { readLegacyOfficeMetadata, writeLegacyOfficeMetadata } from "@christophervr/ole2";
 
@@ -76,6 +78,8 @@ if (edited === fileBytes) console.log("Unchanged or unsupported edit.");
 ```
 
 For Word, `tryWriteOleDocParagraphEdit(bytes, paragraphIndex, text)` returns either `status: 'edited'` with its strategy or `status: 'rejected'` with the original bytes and a reason. Equal-length plain-text edits retain original runs and character-position tables, including untouched headers and fields elsewhere. Growing edits require a simpler supported document and retain paragraph/first-run formatting. Supported v3 regular-stream containers retain nested storages, unknown streams and directory metadata; dependent character-position tables and unsupported allocation layouts are refused. This remains a paragraph editor rather than a complete Word document model or creator.
+
+DOC readers/editors accept an optional `OleDocProcessingLimits` argument. Defaults bound main text to 16,777,216 UTF-16 units and piece processing to 65,536 entries before decoding/allocation; callers may explicitly raise them. The explicit editor reports `resource-limit` or `invalid-limits`, and the compatibility reader returns `undefined` when processing cannot complete within its budget.
 
 ## Legacy PowerPoint export
 
