@@ -146,6 +146,17 @@ describe('active binary PPT notes model', () => {
     expect(() => { t.text = 'Synthetic notes modified.'; }).toThrow(/overlaps another live persist object/);
     expect(d.serialize()).toEqual(resized.bytes); expect(d.revision).toBe(0);
   });
+  it('refuses a notes container extended over otherwise valid save-directory/user-edit metadata', () => {
+    const input = mutate((v, notes) => {
+      const user = readCompoundFileStream(load(), ['Current User'])!, edit = readRecordOrThrow(v, viewOf(user).getUint32(16, true));
+      const note = readRecordOrThrow(v, notes[1]!.headerOffset);
+      v.setUint32(note.headerOffset + 4, edit.dataOffset + edit.recLen - note.dataOffset, true);
+    });
+    const d = new PptDocument(input), t = body(d, 1);
+    expect(t.text).toBe('Unicode notes retained.'); t.text = t.text; expect(d.dirty).toBe(false);
+    expect(() => { t.text = 'Unicode notes modified.'; }).toThrow(/save-history metadata/);
+    expect(d.serialize()).toEqual(input); expect(d.revision).toBe(0);
+  });
   it('rejects malformed notes atom header and odd UTF16 text records', () => {
     const wrongHeader = mutate((v, notes) => v.setUint16(notes[0]!.headerOffset + 8, 0, true));
     expect(() => readPptSlideNotes(wrongHeader)).toThrow(/NotesAtom/);
