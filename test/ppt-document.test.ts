@@ -6,6 +6,8 @@ import { editPptSlideText, readPptSlideTexts } from '../src/legacy-ppt-text.js';
 import { readCompoundFileStream, replaceCompoundFileStream } from '../src/ole2-stream-edit.js';
 import { HEADER_TOKEN_ENCRYPTED } from '../src/legacy-ppt-record-types.js';
 import { buildPptFile } from '../src/legacy-ppt-writer.js';
+import { buildPersistDirectory } from '../src/ppt/persist-directory.js';
+import { readRecordOrThrow } from '../src/legacy-ppt-record-stream.js';
 
 const load = (file = 'ppt/native-text.ppt') => new Uint8Array(readFileSync(new URL(`./fixtures/${file}`, import.meta.url)));
 const simpleDeck = (text: string) => buildPptFile({ widthEmu: 9144000, heightEmu: 5143500, pictures: [], slides: [{ shapes: [{
@@ -81,6 +83,25 @@ describe('PptDocument active text model', () => {
 		expect(node.text).toBe('Project\rAtlas');
 		expect(() => { node.text = 'Project\rOrion'; }).toThrow(/OOXML mirror/);
 		expect(doc.dirty).toBe(false); expect(doc.serialize()).toEqual(input);
+	});
+	it('refuses shared physical text atoms reached through distinct active persist IDs', () => {
+		const input = load(), stream = readCompoundFileStream(input, ['PowerPoint Document'])!, current = readCompoundFileStream(input, ['Current User'])!;
+		const view = new DataView(stream.buffer, stream.byteOffset, stream.byteLength), currentView = new DataView(current.buffer, current.byteOffset, current.byteLength);
+		const model = readPptSlideTexts(input), first = model.slides[0]!, second = model.slides[1]!;
+		const chain = buildPersistDirectory(view, currentView.getUint32(16, true));
+		const directory = readRecordOrThrow(view, chain.currentEdit.offsetPersistDirectory);
+		for (let pos = directory.dataOffset; pos < directory.dataOffset + directory.recLen;) {
+			const packed = view.getUint32(pos, true), start = packed & 0xfffff, count = packed >>> 20; pos += 4;
+			for (let i = 0; i < count; i++, pos += 4) if (start + i === second.persistId) view.setUint32(pos, chain.directory.get(first.persistId)!, true);
+		}
+		const shared = replaceCompoundFileStream(input, ['PowerPoint Document'], stream), doc = new PptDocument(shared);
+		const a = doc.slides[0]!.texts[0]!, b = doc.slides[1]!.texts[0]!;
+		expect(a.headerOffset).toBe(b.headerOffset); expect(a.persistId).not.toBe(b.persistId);
+		a.text = a.text; expect(doc.dirty).toBe(false);
+		expect(() => { a.text = 'Native title updated'; }).toThrow(/shared by multiple active/);
+		expect(() => { b.text = 'Native title updated'; }).toThrow(/shared by multiple active/);
+		expect(doc.dirty).toBe(false); expect(doc.revision).toBe(0); expect(a.text).toBe('Native title fixture');
+		expect(b.text).toBe(a.text); expect(doc.serialize()).toEqual(shared);
 	});
 	it('rejects malformed and encrypted sources during construction', () => {
 		expect(() => new PptDocument(new Uint8Array(512))).toThrow();

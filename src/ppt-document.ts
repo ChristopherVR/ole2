@@ -74,6 +74,8 @@ export class PptDocument extends Ole2DocumentBase {
 		const atom = current.slides[slideIndex]?.texts[node.textIndex];
 		if (!atom || atom.headerOffset !== node.headerOffset || atom.encoding !== node.encoding || atom.text !== node.text)
 			throw new UnsupportedOle2EditError('PPT text identity or expected text no longer matches');
+		if (value !== atom.text && current.slides.reduce((count, slide) => count + slide.texts.filter(text => text.headerOffset === atom.headerOffset).length, 0) !== 1)
+			throw new UnsupportedOle2EditError('PPT text atom is shared by multiple active locations');
 		const result = editPptSlideText(bytes, { slideIndex, textIndex: node.textIndex, expectedText: node.text, text: value });
 		if (result.status === 'unsupported') throw new UnsupportedOle2EditError(result.reason);
 		if (result.status === 'edited') this.commitBytes(result.bytes);
