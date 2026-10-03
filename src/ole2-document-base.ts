@@ -2,7 +2,7 @@
 import { parseOle2 as parseContainer } from './ole2-parser-read.js';
 import type { Ole2DirectoryEntry, Ole2File } from './ole2-parser-types.js';
 
-export type Ole2DocumentKind = 'cfb' | 'doc' | 'xls' | 'ppt';
+export type Ole2DocumentKind = 'cfb' | 'doc' | 'xls' | 'ppt' | 'vsd';
 export interface Ole2DocumentCapabilities {
  readonly read: readonly string[];
  readonly write: readonly string[];
