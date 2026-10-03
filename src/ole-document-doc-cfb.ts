@@ -13,10 +13,16 @@ import { readDocFib } from './ole-document-doc-fib.js';
  *
  * @module ole-document-doc-cfb
  */
-import { parseOle2 } from './ole2-parser-read.js';
-import { ENTRY_TYPE_ROOT, ENTRY_TYPE_STORAGE, ENTRY_TYPE_STREAM } from './ole2-parser-types.js';
-import { buildOle2 } from './ole2-parser-write.js';
 import { readCompoundFileStream, replaceCompoundFileStream } from './ole2-stream-edit.js';
+import { resizeCompoundFileStream } from './ole2-stream-resize.js';
+
+/** A container edit was refused rather than rebuilding and losing opaque data. */
+export class DocCfbRewriteError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'DocCfbRewriteError';
+	}
+}
 
 export interface DocCfbUnwrap {
 	/** The `WordDocument` stream's bytes. */
@@ -24,9 +30,9 @@ export interface DocCfbUnwrap {
 	/** The `0Table`/`1Table` stream `readDocFib` selected. */
 	tableStreamName: '0Table' | '1Table';
 	tableBytes: Uint8Array;
-	/** The current flat writer cannot preserve nested storages or duplicate stream names. */
+	/** Both DOC streams can grow through the preserving regular-v3 stream resizer. */
 	canRewrite?: boolean;
-	/** Rebuild the full compound file with edited `WordDocument`/table stream bytes, preserving every other stream and the root CLSID. */
+	/** Patch or resize the DOC streams while retaining the original hierarchy, metadata and other streams. Throws if preservation is unsupported. */
 	rewrap: (editedWordDocBytes: Uint8Array, editedTableBytes: Uint8Array) => Uint8Array;
 }
 
@@ -52,11 +58,6 @@ export function unwrapDocBytes(bytes: Uint8Array): ParsedDocCfbUnwrap | undefine
 		return undefined;
 	}
 	try {
-		const buffer = bytes.buffer.slice(
-			bytes.byteOffset,
-			bytes.byteOffset + bytes.byteLength,
-		) as ArrayBuffer;
-		const ole = parseOle2(buffer);
 		const wordDocBytes = readCompoundFileStream(bytes, ['WordDocument']);
 		if (!wordDocBytes) {
 			return undefined;
@@ -66,10 +67,11 @@ export function unwrapDocBytes(bytes: Uint8Array): ParsedDocCfbUnwrap | undefine
 		if (!tableBytes) {
 			return undefined;
 		}
-		const rootClsid = ole.entries.find((e) => e.type === ENTRY_TYPE_ROOT)?.clsid;
-		const names = ole.entries.filter((e) => e.type === ENTRY_TYPE_STREAM).map((e) => e.name.toUpperCase());
-		const canRewrite = !ole.entries.some((e) => e.type === ENTRY_TYPE_STORAGE) &&
-			new Set(names).size === names.length;
+		const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		const cutoff = header.getUint32(0x38, true);
+		const canRewrite = header.getUint16(0x1a, true) === 3 && header.getUint32(0x48, true) === 0 &&
+			header.getUint32(0x2c, true) <= 109 && (cutoff === 0 || cutoff === 4096) &&
+			wordDocBytes.length >= cutoff && tableBytes.length >= cutoff;
 		return {
 			wordDocBytes,
 			tableStreamName: fib.tableStreamName,
@@ -78,29 +80,17 @@ export function unwrapDocBytes(bytes: Uint8Array): ParsedDocCfbUnwrap | undefine
 			rewrap: (editedWordDocBytes, editedTableBytes) => {
 				if (editedWordDocBytes.length === wordDocBytes.length && editedTableBytes.length === tableBytes.length) {
 					const patchedWord = replaceCompoundFileStream(bytes, ['WordDocument'], editedWordDocBytes);
-					if (patchedWord === bytes) throw new Error('Cannot safely patch WordDocument');
+					if (patchedWord === bytes) throw new DocCfbRewriteError('Cannot safely patch WordDocument');
 					if (editedTableBytes.every((value, i) => value === tableBytes[i])) return patchedWord;
 					const patchedTable = replaceCompoundFileStream(patchedWord, [fib.tableStreamName], editedTableBytes);
-					if (patchedTable === patchedWord) throw new Error('Cannot safely patch DOC table stream');
+					if (patchedTable === patchedWord) throw new DocCfbRewriteError('Cannot safely patch DOC table stream');
 					return patchedTable;
 				}
-				if (!canRewrite) throw new Error('Nested DOC container cannot be safely rebuilt');
-				const streams = new Map<string, Uint8Array>();
-				for (const entry of ole.entries) {
-					if (entry.type !== ENTRY_TYPE_STREAM) {
-						continue;
-					}
-					const data =
-						entry.name === 'WordDocument'
-							? editedWordDocBytes
-							: entry.name === fib.tableStreamName
-								? editedTableBytes
-								: ole.getStream(entry.name);
-					if (data) {
-						streams.set(entry.name, data);
-					}
-				}
-				return new Uint8Array(buildOle2(streams, rootClsid));
+				const word = resizeCompoundFileStream(bytes, ['WordDocument'], editedWordDocBytes);
+				if (!word.ok) throw new DocCfbRewriteError(`Cannot resize WordDocument: ${word.reason}`);
+				const table = resizeCompoundFileStream(word.bytes, [fib.tableStreamName], editedTableBytes);
+				if (!table.ok) throw new DocCfbRewriteError(`Cannot resize DOC table stream: ${table.reason}`);
+				return table.bytes;
 			},
 		};
 	} catch {

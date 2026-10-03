@@ -38,14 +38,15 @@
  * features add their own character-position-keyed tables that a paragraph
  * edit's character-count shift would silently invalidate, and this module
  * has not been verified against a real Word round trip for that case. Non-main
- * stories and drawing/anchor tables are also guarded. The flat CFB rebuild
- * refuses nested storage containers for growing streams; CP-stable edits use
- * the hierarchy-preserving CFB patcher. Encrypted/unsupported FIBs are unreadable.
+ * stories and drawing/anchor tables are also guarded. Stream growth preserves
+ * nested storages and opaque directory metadata in regular v3 CFB layouts;
+ * unsupported mini-stream/version layouts are explicitly refused. CP-stable edits
+ * use the hierarchy-preserving CFB patcher. Encrypted/unsupported FIBs are unreadable.
  * Reading (`readOleDocParagraphs`) otherwise has no editing feature restriction.
  *
  * @module ole-document-doc-editor
  */
-import { unwrapDocBytes } from './ole-document-doc-cfb.js';
+import { DocCfbRewriteError, unwrapDocBytes } from './ole-document-doc-cfb.js';
 import { readDocFib, readFcLcbAt, patchDocFib } from './ole-document-doc-fib.js';
 import type { ParsedDocFib, FcLcb } from './ole-document-doc-fib.js';
 import {
@@ -343,7 +344,8 @@ export function tryWriteOleDocParagraphEdit(
 		});
 
 		return { status: 'edited', strategy: 'piece-append', bytes: cfb.rewrap(newWordDoc, newTableBytes) };
-	} catch {
+	} catch (error) {
+		if (error instanceof DocCfbRewriteError) return rejected('unsupported-container');
 		return rejected('invalid-document');
 	}
 }

@@ -93,7 +93,7 @@ describe('Word 97-2003 piece table editing', () => {
 		}
 	});
 
-	it('reports unsafe containers and populated endnote/drawing CP tables without changing bytes', () => {
+	it('preserves nested containers and rejects populated endnote/drawing CP tables without changing bytes', () => {
 		const doc = unwrapDocBytes(loadFixture())!;
 		const nested = nestedCfb([
 			{ path: ['WordDocument'], bytes: doc.wordDocBytes },
@@ -101,7 +101,10 @@ describe('Word 97-2003 piece table editing', () => {
 			{ path: ['ObjectPool', 'Private'], bytes: new Uint8Array([7, 8, 9]) },
 		]);
 		expect(readOleDocParagraphs(nested)).toStrictEqual(paragraphs);
-		expect(tryWriteOleDocParagraphEdit(nested, 0, 'x')).toEqual({ status: 'rejected', bytes: nested, reason: 'unsupported-container' });
+		const grown = tryWriteOleDocParagraphEdit(nested, 0, 'A longer nested-container paragraph replacement.');
+		expect(grown.status).toBe('edited');
+		expect(readOleDocParagraphs(grown.bytes)?.[0]).toBe('A longer nested-container paragraph replacement.');
+		expect(readCompoundFileStream(grown.bytes, ['ObjectPool', 'Private'])).toStrictEqual(new Uint8Array([7, 8, 9]));
 		const stable = tryWriteOleDocParagraphEdit(nested, 0, 'Other paragraph plain text.');
 		expect(stable.status).toBe('edited');
 		expect(readCompoundFileStream(stable.bytes, ['ObjectPool', 'Private'])).toStrictEqual(new Uint8Array([7, 8, 9]));
