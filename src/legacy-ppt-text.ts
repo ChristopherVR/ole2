@@ -206,6 +206,9 @@ export function editPptSlideText(input: Uint8Array, edit: {
 }): PptTextEditResult {
 	const reject = (reason: string): PptTextEditResult => ({ status: 'unsupported', bytes: input, reason });
 	try {
+		// Capture caller accessors once so the ownership guard checks the same
+		// selected text and replacement that validation and encoding use.
+		edit = { slideIndex: edit.slideIndex, textIndex: edit.textIndex, expectedText: edit.expectedText, text: edit.text };
 		if (!Number.isSafeInteger(edit.slideIndex) || !Number.isSafeInteger(edit.textIndex) || edit.slideIndex < 0 || edit.textIndex < 0)
 			return reject('Invalid text location');
 		const { stream, model, mirroredAtoms } = inspect(input);

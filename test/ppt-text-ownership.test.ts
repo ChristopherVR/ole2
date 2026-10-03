@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { PptDocument } from '../src/ppt-document.js';
+import { editPptSlideText, readPptSlideTexts } from '../src/legacy-ppt-text.js';
 import { readCompoundFileStream, replaceCompoundFileStream } from '../src/ole2-stream-edit.js';
 import { resizeCompoundFileStream } from '../src/ole2-stream-resize.js';
 import { readRecordOrThrow } from '../src/legacy-ppt-record-stream.js';
@@ -31,6 +32,16 @@ export function nestedSlideInNotes(): Uint8Array {
   return resized.bytes;
 }
 describe('PPT slide text persist ownership', () => {
+  it('captures the selected slide once before checking ownership', () => {
+    const input = nestedSlideInNotes(), original = readPptSlideTexts(input).slides[0]!.texts[0]!.text;
+    let reads = 0;
+    const result = editPptSlideText(input, {
+      get slideIndex() { return reads++ === 0 ? 0 : 1; },
+      textIndex: 0, expectedText: original, text: original.replace('fixture', 'updated'),
+    });
+    expect(reads).toBe(1); expect(result.status).toBe('unsupported'); expect(result.bytes).toBe(input);
+    if (result.status === 'unsupported') expect(result.reason).toMatch(/overlaps another live persist object/);
+  });
   it('refuses text inside a slide also owned by opaque notes bytes, keeping no-ops clean', () => {
     const input = nestedSlideInNotes(), document = new PptDocument(input), text = document.slides[0]!.texts[0]!;
     const original = text.text, replacement = original.replace('fixture', 'updated');
