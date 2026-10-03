@@ -110,3 +110,28 @@ Use the native snapshot script to compare generated files against their original
 fixture baselines with explicit declared text/value changes. Field locations
 should be captured for the DOC case. These are captured semantic checks; neither
 the driver nor successful serialization claims rendered or full-format fidelity.
+# Optional character and cell-type probes
+
+Use `-CaptureWordCharacterFonts` (bounded by `-MaxWordCharacters`, default 4096)
+for selected small DOC fixture edits. This records resolved native appearance per
+character; direct Word SPRM interpretation remains a separate codec assertion.
+`-CapturePptCharacterFonts` has the same purpose for top-level PPT shape text,
+with a total `-MaxPptCharacters` limit of 4096. Default snapshots are unchanged.
+`-CaptureCellTypes` records native Excel Value2 type, displayed Text and a scalar
+local ISERROR probe, distinguishing error HRESULTs from ordinary numbers.
+
+`scripts/libvisio-snapshot.mjs` runs an explicitly supplied trusted `vsd2raw`
+executable or portable extracted Ubuntu packages under WSL. It captures complete
+drawing callbacks, input/executable hashes and tool version with input/output and
+timeout bounds. Example (packages already extracted, no system installation):
+
+```powershell
+node scripts/libvisio-snapshot.mjs --wsl .native-validation/libvisio-portable/root .native-validation/owned.vsd .native-validation/owned-library.json Ubuntu
+```
+
+Library callbacks are independent parser evidence, not native Visio acceptance
+or rendered fidelity. Executable provenance and binary fixture content rights
+must be established separately; a source repository license alone does not
+establish the rights to an arbitrary contributed binary. Unverified public test
+samples stay local and untracked. The timeout/output bounds do not guarantee a
+library memory limit or establish malformed-input safety.
