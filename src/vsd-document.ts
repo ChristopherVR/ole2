@@ -28,7 +28,7 @@ export class VsdPage {
  /** Stored internal inches multiply by scale for rendered page coordinates. */
  get scale(): number | undefined {return this.#read().scale;}
 }
-const CAPABILITIES: Ole2DocumentCapabilities = Object.freeze({read:Object.freeze(['v11-pages','explicit-shape-transform','utf16-shape-text','move-to-line-to']),write:Object.freeze(['equal-length-shape-text','literal-shape-transform']),limitations:Object.freeze(['Version 11 only; stored values without master/style/formula evaluation.','Edits require an exact stored-block fit at the original offset; compressed pages needing relocation are refused.','No added/deleted shapes, text length changes or text field edits.','Shared/overlapping VSD blocks cannot be edited; no native Visio fidelity claim.'])});
+const CAPABILITIES: Ole2DocumentCapabilities = Object.freeze({read:Object.freeze(['v11-pages','explicit-shape-transform','utf16-shape-text','move-to-line-to']),write:Object.freeze(['equal-length-shape-text','literal-shape-transform']),limitations:Object.freeze(['Version 11 only; stored values without master/style/formula evaluation.','Edits require an exact stored-block fit at the original offset; relocation is refused. Bounded compression supports at most 8 MiB decoded leaf/allocation and 4096 zero suffix bytes.','No added/deleted shapes, text length changes or text field edits.','Shared/overlapping VSD blocks cannot be edited; native evidence covers only declared fixture edits, not full Visio fidelity.'])});
 export class VsdDocument extends Ole2DocumentBase {
  #drawing: VsdDrawingData; #pages: readonly VsdPage[];
  get kind(): 'vsd' {return 'vsd';}

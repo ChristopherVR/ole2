@@ -1,5 +1,6 @@
 import { resizeCompoundFileStream } from './ole2-stream-resize.js';
 import { encodeVsdBlock } from './vsd-compression.js';
+import { encodeVsdBlockToSize, VsdCompressionFitError, VSD_COMPRESSION_FIT_MAX_BYTES } from './vsd-compression-fit.js';
 import { readVsdDrawing, VsdError, type VsdDrawingData, type VsdRecordLocation, type VsdTransform } from './vsd-reader.js';
 
 /** Edit only an exactly fitting leaf at its original offset. Native Visio can
@@ -7,9 +8,16 @@ import { readVsdDrawing, VsdError, type VsdDrawingData, type VsdRecordLocation, 
  * pointer graph, so no ancestor or unknown relocation metadata is rewritten. */
 function replaceRecord(input: Uint8Array, drawing: VsdDrawingData, record: VsdRecordLocation, replacement: Uint8Array): Uint8Array {
  if (!drawing.writable) throw new VsdError('shared-or-overlapping-allocation');
+ if((record.block.format&2)&&(record.block.bytes.length>VSD_COMPRESSION_FIT_MAX_BYTES||record.block.length>VSD_COMPRESSION_FIT_MAX_BYTES))throw new VsdError('compression-input-budget');
  const block = record.block, decoded = block.bytes.slice(); decoded.set(replacement, record.offset);
- const stored = block.format & 2 ? encodeVsdBlock(decoded) : decoded;
- if(stored.length!==block.length)throw new VsdError('unsafe-block-relocation');
+ let stored = block.format & 2 ? encodeVsdBlock(decoded) : decoded;
+ if(stored.length!==block.length){
+  // Only parsed chunk streams can carry a verified zero suffix. Pointer
+  // tables/blob prefixes and their undocumented metadata remain untouched.
+  if(!(block.format&2)||![8,12,13].includes(block.format>>>4))throw new VsdError('unsafe-block-relocation');
+  try{const fit=encodeVsdBlockToSize(decoded,block.length);if(!fit)throw new VsdError('unsafe-block-relocation');stored=fit.bytes;}
+  catch(error){if(error instanceof VsdCompressionFitError)throw new VsdError(`compression-${error.reason}`);throw error;}
+ }
  const stream = drawing.stream.slice(); stream.set(stored,block.offset);
  const result = resizeCompoundFileStream(input, drawing.streamPath, stream);
  if (!result.ok) throw new VsdError(`compound-resize-${result.reason}`);
