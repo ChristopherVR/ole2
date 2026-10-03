@@ -1,14 +1,24 @@
 # @christophervr/ole2
 
+[![npm version](https://img.shields.io/npm/v/%40christophervr%2Fole2.svg)](https://www.npmjs.com/package/@christophervr/ole2)
+[![license](https://img.shields.io/npm/l/%40christophervr%2Fole2.svg)](https://github.com/ChristopherVR/ole2/blob/main/LICENSE)
+[![types](https://img.shields.io/npm/types/%40christophervr%2Fole2.svg)](https://www.npmjs.com/package/@christophervr/ole2)
+
+> Framework-neutral codecs for legacy Office compound files.
+
+[API guide](https://christophervr.github.io/ole2/) | [npm](https://www.npmjs.com/package/@christophervr/ole2) | [Full docs](https://christophervr.github.io/ole2/) | [Source](https://github.com/ChristopherVR/ole2)
+
 Framework-neutral primitives for legacy Office compound files. Shared by the PowerPoint and Word viewers without copying implementations.
 
-```sh
+## Install
+
+```bash
 npm install @christophervr/ole2
 ```
 
 [Read the API guide and examples](https://christophervr.github.io/ole2/).
 
-## Scope
+## Features
 
 - MS-CFB/OLE2 compound-file stream reading and writing, including mini streams, FAT/DIFAT and directory metadata.
 - Word 97-2003 binary `.doc` main-body text reading and guarded existing-paragraph text editing.
@@ -18,26 +28,30 @@ npm install @christophervr/ole2
 - Path-based compound stream edits preserve nested storage layout and all bytes outside the edited stream.
 - No browser or framework dependency; typed-array/ArrayBuffer inputs and ESM JavaScript with TypeScript declarations.
 
+## Quick start
+
 ```js
-import { buildOle2, parseOle2 } from '@christophervr/ole2';
-const bytes = buildOle2(new Map([['Example', new Uint8Array([1, 2, 3])]]));
+import { buildOle2, parseOle2 } from "@christophervr/ole2";
+const bytes = buildOle2(new Map([["Example", new Uint8Array([1, 2, 3])]]));
 const file = parseOle2(bytes);
-console.log(file.getStream('Example'));
+console.log(file.getStream("Example"));
 ```
+
+## API
 
 Granular subpaths expose the `ole2-parser-*`, `ole-document-doc-*`, `legacy-excel-*` and `legacy-ppt-*` modules. This is a codec library, not a complete legacy Office renderer. The API guide describes each format's supported subset.
 
 ```js
 import {
-	identifyLegacyOffice,
-	readOleXlsGrid,
-	writeOleXlsNumericCellEdit,
-} from '@christophervr/ole2';
+  identifyLegacyOffice,
+  readOleXlsGrid,
+  writeOleXlsNumericCellEdit,
+} from "@christophervr/ole2";
 
 const kind = identifyLegacyOffice(fileBytes); // Uint8Array or ArrayBuffer
 const grid = readOleXlsGrid(xlsBytes); // Uint8Array; first worksheet, bounded preview
 const edited = writeOleXlsNumericCellEdit(xlsBytes, { row: 0, col: 0, value: 42 });
-if (edited === xlsBytes) console.log('This edit was not supported.');
+if (edited === xlsBytes) console.log("This edit was not supported.");
 ```
 
 `readXlsWorkbook(xlsBytes)` returns a structured `XlsWorkbook` (sheets, cells, XF styles with fonts, fills, borders and number formats, merges, views, comments, hyperlinks, names). It throws `XlsReadError` with `code` `'encrypted'`, `'unsupported-version'` (BIFF5 and earlier) or `'corrupt'`. It never evaluates formulas: cells carry the cached result Excel saved, and the formula text when every token is understood. Charts, pictures, shapes, conditional formatting, data validation, pivot tables and VBA are listed in `unsupported` rather than decoded.
@@ -45,25 +59,25 @@ if (edited === xlsBytes) console.log('This edit was not supported.');
 Excel previews do not evaluate formulas or resolve every continued shared string. Editing is constrained by record type, workbook structure and string-table layout. Unsupported edits return the exact input byte array; callers should check that result before reporting success.
 
 ```js
-import { readLegacyOfficeMetadata, writeLegacyOfficeMetadata } from '@christophervr/ole2';
+import { readLegacyOfficeMetadata, writeLegacyOfficeMetadata } from "@christophervr/ole2";
 
 console.log(readLegacyOfficeMetadata(fileBytes));
-const edited = writeLegacyOfficeMetadata(fileBytes, 'title', 'New title');
+const edited = writeLegacyOfficeMetadata(fileBytes, "title", "New title");
 // Existing SummaryInformation property only; the value must fit its allocated slot.
 // Supported string encodings are Windows-1250 through Windows-1258 and UTF-16.
-if (edited === fileBytes) console.log('Unchanged or unsupported edit.');
+if (edited === fileBytes) console.log("Unchanged or unsupported edit.");
 ```
 
 ## Legacy PowerPoint export
 
 ```js
-import { buildPptFile } from '@christophervr/ole2/legacy-ppt-writer';
+import { buildPptFile } from "@christophervr/ole2/legacy-ppt-writer";
 
 const pptBytes = await buildPptFile({
-	widthEmu: 9144000,
-	heightEmu: 5143500,
-	slides: [{ shapes: [] }],
-	pictures: [],
+  widthEmu: 9144000,
+  heightEmu: 5143500,
+  slides: [{ shapes: [] }],
+  pictures: [],
 });
 // Save pptBytes as a .ppt file. Pass { password: '...' } as a second argument
 // only when legacy RC4 output is required.
@@ -92,3 +106,11 @@ bun run test:package
 The packed-package smoke test installs the tarball into an independent temporary npm project and exercises the public API. The build clears its own `dist` directory so removed codecs cannot accidentally remain in a release. Only compiled output, license, notice and readme ship to npm.
 
 The Pages build contains the format guides by default. To include the browser demo and generated samples in a local Pages build, set `OLE2_BUILD_PAGES_DEMO=1` before running `bun run build:pages`.
+
+## Documentation
+
+[API guide](https://christophervr.github.io/ole2/) | [Source](https://github.com/ChristopherVR/ole2)
+
+## License
+
+Apache-2.0.
