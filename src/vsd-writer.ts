@@ -12,7 +12,7 @@ function replaceRecord(input: Uint8Array, drawing: VsdDrawingData, record: VsdRe
  const block = record.block, decoded = block.bytes.slice(); decoded.set(replacement, record.offset);
  let stored = block.format & 2 ? encodeVsdBlock(decoded) : decoded;
  if(stored.length!==block.length){
-  // Only parsed chunk streams can carry a verified zero suffix. Pointer
+  // Only parsed chunk streams admit bounded exact-length token variation. Pointer
   // tables/blob prefixes and their undocumented metadata remain untouched.
   if(!(block.format&2)||![8,12,13].includes(block.format>>>4))throw new VsdError('unsafe-block-relocation');
   try{const fit=encodeVsdBlockToSize(decoded,block.length);if(!fit)throw new VsdError('unsafe-block-relocation');stored=fit.bytes;}
