@@ -18,6 +18,7 @@ export interface ParsedDocCharacterRun {
 	readonly directBold: boolean | undefined;
 	readonly directItalic: boolean | undefined;
 	readonly directFontSizePoints: number | undefined;
+	readonly directUnderline: 'none' | 'single' | 'double' | undefined;
 	readonly sprms: readonly DocSprm[];
 }
 type Prl = { opcode: number; operand: number[]; at: number };
@@ -53,7 +54,7 @@ function parsePhysicalRuns(word: Uint8Array, table: ReturnType<typeof parseBteTa
 	if (table.pns.length > LIMIT) throw new Error('Formatting page limit');
 	const view = new DataView(word.buffer, word.byteOffset, word.byteLength), out: PhysicalRun[] = [];
 	for (let bte = 0; bte < table.pns.length; bte++) {
-		const page = table.pns[bte]! * 512;
+		const page = (table.pns[bte]! & 0x3fffff) * 512;
 		if (page > word.length - 512) throw new Error('Truncated CHPX page');
 		const count = word[page + 511]!, header = (count + 1) * 4 + count;
 		if (!count || header > 511 || out.length + count > LIMIT) throw new Error('Formatting run limit');
@@ -85,6 +86,7 @@ function inspect(input: Uint8Array) {
 	if (fib.plcfbteChpx.lcb > LIMIT * 8 + 4 || fib.plcfbtePapx.lcb > LIMIT * 8 + 4)
 		throw new Error('Formatting table limit');
 	const chpx = parseBteTable(doc.tableBytes, fib.plcfbteChpx), papx = parseBteTable(doc.tableBytes, fib.plcfbtePapx);
+	papx.pns = papx.pns.map((pn) => pn & 0x3fffff);
 	const physical = parsePhysicalRuns(word, chpx), runs: MappedRun[] = [];
 	for (const piece of pieces) {
 		if (piece.cpStart >= fib.ccpText) break;
@@ -102,9 +104,12 @@ function inspect(input: Uint8Array) {
 				const values = row.prls.filter((p) => p.opcode === opcode);
 				return values.length === 1 && values[0]!.operand[0]! <= 1 ? values[0]!.operand[0] === 1 : undefined;
 			};
+			const underline = row.prls.filter((p) => p.opcode === 0x2a3e);
+			const kul = underline.length === 1 ? underline[0]!.operand[0] : undefined;
 			const size = row.prls.filter((p) => p.opcode === 0x4a43);
 			const halfPoints = size.length === 1 ? size[0]!.operand[0]! + size[0]!.operand[1]! * 256 : undefined;
 			runs.push({ cpStart: cp, cpEnd: end, text: text.slice(cp, end), directBold: direct(0x0835), directItalic: direct(0x0836),
+				directUnderline: piece.prm === 0 && row.prls.every((p) => SAFE_OPERANDS.has(p.opcode)) ? kul === 0 ? 'none' : kul === 1 ? 'single' : kul === 3 ? 'double' : undefined : undefined,
 				directFontSizePoints: piece.prm === 0 && halfPoints !== undefined && halfPoints >= 2 && halfPoints <= 3276 && row.prls.every((p) => SAFE_OPERANDS.has(p.opcode)) ? halfPoints / 2 : undefined,
 				sprms: Object.freeze(row.prls.map((p) => Object.freeze({ opcode: p.opcode, operand: Object.freeze(p.operand.slice()) }))), physical: row, prm: piece.prm });
 			fc += (end - cp) * unit; cp = end;
@@ -149,6 +154,11 @@ export function writeDocCharacterRunFontSize(input: Uint8Array, cpStart: number,
 	return writeExclusiveOperand(input, cpStart, cpEnd, 0x4a43, points * 2);
 }
 
+export function writeDocCharacterRunUnderline(input: Uint8Array, cpStart: number, cpEnd: number, value: 'none' | 'single' | 'double'): Uint8Array {
+	if (typeof value !== 'string' || !['none', 'single', 'double'].includes(value) || !Number.isSafeInteger(cpStart) || !Number.isSafeInteger(cpEnd)) throw new Error('invalid-formatting');
+	return writeExclusiveOperand(input, cpStart, cpEnd, 0x2a3e, value === 'none' ? 0 : value === 'single' ? 1 : 3);
+}
+
 function writeExclusiveOperand(input: Uint8Array, cpStart: number, cpEnd: number, opcode: number, value: number): Uint8Array {
 	const parsed = inspect(input), target = parsed.runs.find((run) => run.cpStart === cpStart && run.cpEnd === cpEnd);
 	if (!target || target.prm !== 0 || /[\x00-\x1f]/u.test(target.text)) throw new Error('unsupported-formatting');
@@ -161,7 +171,7 @@ function writeExclusiveOperand(input: Uint8Array, cpStart: number, cpEnd: number
 	if (operands.length !== 1) throw new Error('inherited-formatting');
 	const operand = operands[0]!, size = opcode === 0x4a43;
 	const previous = operand.operand[0]! + (size ? operand.operand[1]! * 256 : 0);
-	if (size ? operand.operand.length !== 2 || previous < 2 || previous > 3276 : ![0, 1, 128, 129].includes(previous)) throw new Error('inherited-formatting');
+	if (size ? operand.operand.length !== 2 || previous < 2 || previous > 3276 : opcode === 0x2a3e ? ![0, 1, 3].includes(previous) : ![0, 1, 128, 129].includes(previous)) throw new Error('inherited-formatting');
 	// A partial piece/paragraph view must not mutate another logical character.
 	const piece = parsed.pieces.find((p) => p.cpStart <= cpStart && p.cpEnd >= cpEnd)!;
 	const unit = piece.compressed ? 1 : 2, start = piece.fc + (cpStart - piece.cpStart) * unit;
