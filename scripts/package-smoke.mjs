@@ -53,6 +53,7 @@ await writeFile(join(directory, 'fixture.doc'), await readFile(new URL('../test/
 await writeFile(join(directory, 'fixture-size.doc'), await readFile(new URL('../test/fixtures/doc/rich-size-runs.doc', import.meta.url)));
 await writeFile(join(directory, 'fixture.ppt'), await readFile(new URL('../test/fixtures/ppt/native-text.ppt', import.meta.url)));
 await writeFile(join(directory, 'fixture.vsd'), await readFile(new URL('../test/fixtures/vsd/owned-v11.vsd', import.meta.url)));
+await writeFile(join(directory, 'fixture-native.vsd'), await readFile(new URL('../test/fixtures/vsd/native-visio16-v11.vsd', import.meta.url)));
 await writeFile(
 	join(directory, 'verify.mjs'),
 	`
@@ -123,6 +124,16 @@ assert.equal(parseVsd(savedVsd).pages[0].shapes[0].text, 'World\\n');
 assert.equal(parseVsd(savedVsd).pages[0].shapes[0].transform.pinX, 6);
 assert.deepEqual([...vsdModel.getStream('OpaqueUnknown')], [9, 4, 8, 3, 5]);
 assert.throws(() => parseVsd(workbook), Ole2DocumentError);
+const nativeBytes = new Uint8Array(readFileSync(new URL('./fixture-native.vsd', import.meta.url)));
+const nativeVsd = parseVsd(nativeBytes);
+const nativeShape = nativeVsd.pages[0].shapes.find(s => s.id === 1);
+assert.equal(nativeShape.text, 'Hello\\n\\n');
+assert.throws(() => { nativeShape.text = 'World\\n\\n'; }, error => error.reason === 'unsafe-block-relocation');
+assert.deepEqual(nativeVsd.serialize(), nativeBytes);
+assert.equal(nativeVsd.dirty, false);
+assert.equal(nativeVsd.revision, 0);
+nativeShape.text = nativeShape.text;
+assert.deepEqual(nativeVsd.serialize(), nativeBytes);
 const invalid = new Uint8Array([1, 2, 3]);
 assert.equal(editXlsNumericCell(invalid, { row: 0, col: 0, value: 1 }).bytes, invalid);
 const ppt = await buildPptFile({ widthEmu: 9144000, heightEmu: 5143500, slides: [{ shapes: [] }], pictures: [] });

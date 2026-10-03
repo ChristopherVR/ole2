@@ -75,8 +75,21 @@ internal adapter hooks, not a supported external mutation API.
 | DOC | Existing plain paragraph text; guarded growth/shrink outside balanced main-story fields; existing exclusive direct bold/italic and font-size operands | No style resolution, new formatting records, paragraph insertion/removal, table/object model writes, field-code/result editing or unsupported CP-table shifts; processing budgets apply |
 | XLS | Existing numeric/string cells; NUMBER/RK/MULRK to boolean/error and existing BOOLERR replacement | No cell creation, formulas or recalculation; unsupported type changes and unsafe relocation records/layouts refused; selected rich string becomes plain while retaining XF and other aliases |
 | PPT | Existing active fixed-length text; supported small-anchor rectangle/text-box bounds | Inline shape text is linked by validated identity; outline refs may remain unresolved. Group/mirror/inherited/rotated/large-anchor edits refuse; no general run/notes reconstruction |
-| VSD v11 | Existing same-length UTF-16 shape text; exclusive top-level literal transforms | No older-version model, formula/style/master evaluation, fields or structural creation; shared/overlapping blocks and dependent transform edits refuse |
+| VSD v11 | Existing same-length UTF-16 shape text; exclusive top-level literal transforms within an unchanged stored block allocation | No older-version model, formula/style/master evaluation, fields or structural creation; block relocation, shared/overlapping blocks and dependent transform edits refuse |
 | CFB | Supported existing regular/mini stream resizing with path/hierarchy preservation | No new directory entries, external DIFAT expansion or variable-length v4 mini transitions; container support is separate from Office fidelity |
+
+Native Microsoft Visio 16.0.20430.20140 accepted the owned native baseline and
+its byte-exact no-op serialization. Its own save/reopen preserved all captured
+fields. The released 0.9.0 VSD text writer returned a corrupt file after an
+equal-length `Hello\n\n` to `World\n\n` edit: relocating the page block was
+rejected by Visio even though the CFB container and parser self-roundtrip passed.
+The writer now refuses edits whose encoded block cannot retain its original
+allocation, without changing bytes, dirty state or revision. This containment
+does not establish native acceptance for every admitted write. The authored
+synthetic fixture was also rejected by Visio; its libvisio results are separate
+parser-mechanics evidence. Stored native text retains a terminal paragraph LF
+that the COM `Text` property omits. Positive master/layer fidelity and rendering
+remain unverified.
 
 For DOC, `doc.paragraphs[index].runs[runIndex].directFontSizePoints = 13.5`
 replaces an existing exclusive direct `sprmCHps` operand. Values must be primitive
