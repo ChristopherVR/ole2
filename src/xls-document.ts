@@ -1,0 +1,112 @@
+/** Structured BIFF8 document adapter over the preservation-safe cell editors. */
+import { Ole2DocumentBase, Ole2DocumentError, UnsupportedOle2EditError } from './ole2-document-base.js';
+import { readCompoundFileStream } from './ole2-stream-edit.js';
+import { readXlsWorkbook, type XlsWorkbook, type XlsSheet, type XlsCell, type XlsCellValue } from './legacy-excel-workbook.js';
+import { editXlsNumericCell } from './legacy-excel-biff8-edit.js';
+import { editXlsPreservedStringCell } from './legacy-excel-preserved-string-cell.js';
+
+export type XlsReadonly<T> = T extends Map<infer K, infer V> ? ReadonlyMap<K, XlsReadonly<V>>
+ : T extends readonly (infer V)[] ? readonly XlsReadonly<V>[]
+ : T extends object ? { readonly [K in keyof T]: XlsReadonly<T[K]> } : T;
+
+function snapshot<T>(value: T): XlsReadonly<T> {
+ const copy = structuredClone(value);
+ const freeze = (item: unknown): void => {
+  if (!item || typeof item !== 'object') return;
+  if (item instanceof Map) for (const entry of item.values()) freeze(entry);
+  else for (const entry of Object.values(item)) freeze(entry);
+  Object.freeze(item);
+ };
+ freeze(copy);
+ return copy as XlsReadonly<T>;
+}
+
+/** Existing cell handle. Only value writes use binary editors; metadata is a snapshot. */
+export class XlsCellNode {
+ constructor(private readonly document: XlsDocument, readonly sheetIndex: number, readonly row: number, readonly col: number) { Object.freeze(this); }
+ get value(): XlsCellValue { return structuredClone(this.document.cellModel(this.sheetIndex, this.row, this.col).value); }
+ set value(value: XlsCellValue) { this.document.setCellValue(this.sheetIndex, this.row, this.col, value); }
+ get snapshot(): XlsReadonly<XlsCell> { return snapshot(this.document.cellModel(this.sheetIndex, this.row, this.col)); }
+ get xf(): number { return this.snapshot.xf; }
+ get formula(): string | undefined { return this.snapshot.formula; }
+ get formulaUndecoded(): boolean | undefined { return this.snapshot.formulaUndecoded; }
+ get style() { return this.document.workbook.xfs[this.xf]; }
+}
+
+/** Tab-order sheet handle, including read-only chart/macro tabs. */
+export class XlsSheetNode {
+ constructor(private readonly document: XlsDocument, readonly index: number) { Object.freeze(this); }
+ get snapshot(): XlsReadonly<XlsSheet> { return this.document.workbook.sheets[this.index]!; }
+ get name(): string { return this.snapshot.name; }
+ get kind() { return this.snapshot.kind; }
+ get state() { return this.snapshot.state; }
+ get merges() { return this.snapshot.merges; }
+ get cells(): readonly XlsCellNode[] { return Object.freeze(this.snapshot.cells.map(c => new XlsCellNode(this.document, this.index, c.row, c.col))); }
+ cell(row: number, col: number): XlsCellNode {
+  this.document.cellModel(this.index, row, col);
+  return new XlsCellNode(this.document, this.index, row, col);
+ }
+}
+
+const XLS_CAPABILITIES = Object.freeze({
+  read: Object.freeze(['BIFF8 worksheets', 'cell values and cached formulas', 'styles and merges', 'opaque compound streams']),
+  write: Object.freeze(['existing NUMBER/RK/MULRK numeric values', 'existing LABELSST/NUMBER/RK/MULRK plain string values']),
+  limitations: Object.freeze(['No cell creation, formula editing or recalculation', 'Numeric writes require exact original encoding', 'String writes reject unsupported relocation records and container layouts', 'Plain string replacement removes selected rich text runs']),
+ });
+/** BIFF8 Excel document. Does not create cells or recalculate formula caches. */
+export class XlsDocument extends Ole2DocumentBase {
+ get kind(): 'xls' { return 'xls'; }
+ get capabilities() { return XLS_CAPABILITIES; }
+ readonly #sheetNodes: readonly XlsSheetNode[];
+ get sheets(): readonly XlsSheetNode[] { return this.#sheetNodes; }
+ #model: XlsWorkbook;
+ #needsRecalculation = false;
+ constructor(input: Uint8Array) {
+  super(input);
+  const bytes = this.getBytes();
+  const streams = ['Workbook', 'Book'].filter(name => readCompoundFileStream(bytes, [name]) !== undefined);
+  if (streams.length === 0) throw new Ole2DocumentError('format-mismatch', 'The compound file has no root Excel workbook stream.');
+  if (streams.length !== 1) throw new Ole2DocumentError('ambiguous-format', 'The compound file has multiple Excel workbook streams.');
+  this.#model = readXlsWorkbook(bytes);
+  this.#sheetNodes = Object.freeze(this.#model.sheets.map((_, index) => new XlsSheetNode(this, index)));
+ }
+ get workbook(): XlsReadonly<XlsWorkbook> { return snapshot(this.#model); }
+ get recalculationRequired(): boolean { return this.#needsRecalculation; }
+ /** @internal Used by stable cell handles; returns an isolated read snapshot. */
+ cellModel(sheetIndex: number, row: number, col: number): XlsCell {
+  if (!Number.isInteger(row) || row < 0 || row > 65535 || !Number.isInteger(col) || col < 0 || col > 255)
+   throw new UnsupportedOle2EditError('invalid-cell-coordinate');
+  const cells = this.#model.sheets[sheetIndex]?.cells.filter(c => c.row === row && c.col === col);
+  if (!cells?.length) throw new UnsupportedOle2EditError('cell-not-found');
+  if (cells.length !== 1) throw new UnsupportedOle2EditError('ambiguous-cell');
+  return structuredClone(cells[0]!);
+ }
+ /** @internal All changes are validated and parsed before committing bytes. */
+ setCellValue(sheetIndex: number, row: number, col: number, value: XlsCellValue): void {
+  const cell = this.cellModel(sheetIndex, row, col);
+  if (cell.formula !== undefined || cell.formulaUndecoded || cell.arrayRange || cell.sharedFormula)
+   throw new UnsupportedOle2EditError('formula-edit-not-supported');
+  const sheet = this.#model.sheets[sheetIndex];
+  if (sheet?.kind !== 'worksheet') throw new UnsupportedOle2EditError('sheet-not-supported');
+  if (typeof cell.value !== 'number' && typeof cell.value !== 'string')
+   throw new UnsupportedOle2EditError('cell-type-not-supported');
+  if (typeof value !== 'number' && typeof value !== 'string')
+   throw new UnsupportedOle2EditError('value-type-not-supported');
+  if (typeof value === 'number' && (typeof cell.value !== 'number' || !Number.isFinite(value)))
+   throw new UnsupportedOle2EditError('numeric-type-change-not-supported');
+  if (Object.is(cell.value, value)) return;
+  const worksheetIndex = this.#model.sheets.slice(0, sheetIndex).filter(s => s.kind === 'worksheet').length;
+  const edit = { row, col, value, worksheetIndex };
+  const result = typeof value === 'number'
+   ? editXlsNumericCell(this.getBytes(), { ...edit, value })
+   : editXlsPreservedStringCell(this.getBytes(), { ...edit, value });
+  if (result.status !== 'edited') throw new UnsupportedOle2EditError(result.reason);
+  const next = readXlsWorkbook(result.bytes);
+  const selected = next.sheets[sheetIndex]?.cells.filter(c => c.row === row && c.col === col);
+  if (selected?.length !== 1 || !Object.is(selected[0]!.value, value))
+   throw new UnsupportedOle2EditError('edit-verification-failed');
+  this.commitBytes(result.bytes);
+  this.#model = next;
+  this.#needsRecalculation = true;
+ }
+}
