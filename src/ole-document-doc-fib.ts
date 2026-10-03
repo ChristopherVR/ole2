@@ -34,6 +34,9 @@ export interface FcLcb {
 
 /** Byte offsets and current values of every FIB field this module touches. */
 export interface DocFib {
+	/** Effective format version, including nFibNew when present. */
+	nFib: number;
+	nFibBase: number;
 	/** Byte offset of the `flags1` word (FibBase), for patching `fComplex`. */
 	flags1Offset: number;
 	flags1: number;
@@ -71,7 +74,8 @@ export function readDocFib(wordDoc: Uint8Array): DocFib {
 	if (wIdent !== 0xa5ec) {
 		throw new Error('Not a WordDocument FIB (bad wIdent)');
 	}
-	if (![0x00c1, 0x00d9, 0x0101, 0x010c, 0x0112].includes(view.getUint16(2, true)))
+	const nFibBase = view.getUint16(2, true);
+	if (![0x00c1, 0x00d9, 0x0101, 0x010c, 0x0112].includes(nFibBase))
 		throw new Error('Unsupported Word FIB version');
 
 	const flags1Offset = 0xa;
@@ -87,9 +91,17 @@ export function readDocFib(wordDoc: Uint8Array): DocFib {
 	const cbRgFcLcbCountOffset = fibRgLw97Offset + cslw * 4;
 	const fibRgFcLcbOffset = cbRgFcLcbCountOffset + 2;
 	const fibRgFcLcbCount = view.getUint16(cbRgFcLcbCountOffset, true);
-	if (csw < 14 || cslw < 22 || fibRgFcLcbCount < 34 ||
-		fibRgFcLcbOffset + fibRgFcLcbCount * 8 > wordDoc.length)
+	if (csw !== 14 || cslw !== 22 ||
+		fibRgFcLcbOffset + fibRgFcLcbCount * 8 + 2 > wordDoc.length)
 		throw new Error('Truncated Word FIB arrays');
+	const cswNewOffset = fibRgFcLcbOffset + fibRgFcLcbCount * 8;
+	const cswNew = view.getUint16(cswNewOffset, true);
+	if (cswNewOffset + 2 + cswNew * 2 > wordDoc.length) throw new Error('Truncated Word FIB extension');
+	const nFib = cswNew === 0 ? nFibBase : view.getUint16(cswNewOffset + 2, true);
+	const expectedCounts = new Map([[0x00c1, 93], [0x00d9, 108], [0x0101, 136], [0x010c, 164], [0x0112, 183]]);
+	if (expectedCounts.get(nFib) !== fibRgFcLcbCount ||
+		(cswNew !== 0 && cswNew !== (nFib === 0x0112 ? 5 : 2)))
+		throw new Error('Word FIB version and array counts disagree');
 	const ccpText = view.getInt32(fibRgLw97Offset + 12, true);
 	const otherStories = [4, 5, 7, 8, 9, 10].map((i) => view.getInt32(fibRgLw97Offset + i * 4, true));
 	if (ccpText < 0 || otherStories.some((cp) => cp < 0)) throw new Error('Negative Word story length');
@@ -103,6 +115,8 @@ export function readDocFib(wordDoc: Uint8Array): DocFib {
 	const ccpTextOffset = fibRgLw97Offset + 12;
 
 	return {
+		nFib,
+		nFibBase,
 		flags1Offset,
 		flags1,
 		tableStreamName: fWhichTblStm ? '1Table' : '0Table',

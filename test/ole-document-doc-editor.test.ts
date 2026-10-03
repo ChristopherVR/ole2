@@ -106,7 +106,7 @@ describe('Word 97-2003 piece table editing', () => {
 		expect(stable.status).toBe('edited');
 		expect(readCompoundFileStream(stable.bytes, ['ObjectPool', 'Private'])).toStrictEqual(new Uint8Array([7, 8, 9]));
 		expect(stable.bytes.length).toBe(nested.length);
-		for (const index of [2, 40, 46, 48, 56]) {
+		for (const index of [2, 40, 46, 48, 56, 75, 76, 89, 90]) {
 			const source = mutateWord((word, fib) => new DataView(word.buffer).setUint32(fib.fibRgFcLcbOffset + index * 8 + 4, 12, true));
 			expect(tryWriteOleDocParagraphEdit(source, 0, 'x')).toEqual({ status: 'rejected', bytes: source, reason: 'unsupported-features' });
 		}
@@ -142,5 +142,21 @@ describe('Word 97-2003 piece table editing', () => {
 		// A replacement requiring UTF-16 cannot reuse compressed bytes or shift a field table.
 		const unicode = '\u6f22'.repeat(replacement.length);
 		expect(tryWriteOleDocParagraphEdit(source, 0, unicode)).toEqual({ status: 'rejected', bytes: source, reason: 'unsupported-features' });
+	});
+
+	it('recognizes effective extended FIB versions and refuses populated unknown CP tables', () => {
+		const fib = readDocFib(unwrapDocBytes(loadFixture())!.wordDocBytes);
+		expect(fib.nFibBase).toBe(0xc1);
+		expect(fib.nFib).toBe(0x112);
+		for (const index of [115, 117, 124, 125, 180]) {
+			const source = mutateWord((word, info) => new DataView(word.buffer).setUint32(info.fibRgFcLcbOffset + index * 8 + 4, 12, true));
+			expect(tryWriteOleDocParagraphEdit(source, 0, 'Longer replacement paragraph text.')).toEqual({ status: 'rejected', bytes: source, reason: 'unsupported-features' });
+			expect(tryWriteOleDocParagraphEdit(source, 0, 'Other paragraph plain text.').status).toBe('edited');
+		}
+		const shortCount = mutateWord((word, info) => new DataView(word.buffer).setUint16(info.fibRgFcLcbOffset - 2, 34, true));
+		expect(readOleDocParagraphs(shortCount)).toBeUndefined();
+		const badWord = unwrapDocBytes(loadFixture())!.wordDocBytes.slice();
+		new DataView(badWord.buffer).setUint16(0x20, 15, true);
+		expect(() => readDocFib(badWord)).toThrow();
 	});
 });

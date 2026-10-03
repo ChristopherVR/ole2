@@ -68,11 +68,20 @@ import type { DocPiece } from './ole-document-doc-pieces.js';
 import { encodeCp1252 } from './ole-document-doc-cp1252.js';
 
 /** [MS-DOC] 2.5.3 `FibRgFcLcb97` indices for features this editor refuses to edit around (see module doc). */
-const RISKY_PLCF_INDICES = [2, 3, 4, 5, 16, 17, 18, 19, 20, 40, 41, 42, 43, 46, 47, 48, 54, 55, 56, 57, 58, 59];
+const RISKY_PLCF_INDICES = [2, 3, 4, 5, 16, 17, 18, 19, 20, 40, 41, 42, 43, 46, 47, 48, 54, 55, 56, 57, 58, 59, 75, 76, 89, 90];
 const RISKY_STTB_INDICES = [21, 22, 23]; // bkmk sttb, bkf, bkl
+// [MS-DOC] 2.5.7/2.5.8/2.5.10: ignored table-character cache, email metadata,
+// revision-save IDs, and ignored theme/color mapping. None defines live CP ranges.
+const SAFE_EXTENDED_FC_LCB_INDICES = new Set([93, 94, 113, 181, 182]);
 
 function hasUnsupportedFeatures(wordDoc: Uint8Array, fib: DocFib): boolean {
 	if (fib.ccpOtherStories > 0) return true;
+	// Effective versions can be extended even when FibBase.nFib remains Word97.
+	// Refuse every populated unknown extension, including factoid/repair bookmarks.
+	for (let index = 93; index < fib.fibRgFcLcbCount; index++) {
+		if (!SAFE_EXTENDED_FC_LCB_INDICES.has(index) && readFcLcbAt(wordDoc, fib, index).lcb !== 0)
+			return true;
+	}
 	// A trivial/empty PLCF is still (n+1)*4 = 4 bytes (a single sentinel CP);
 	// anything larger means the document actually uses the feature.
 	for (const index of RISKY_PLCF_INDICES) {
