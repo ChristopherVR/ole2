@@ -5,9 +5,9 @@ follows the viewer's document/content navigation pattern while retaining opaque
 binary bytes rather than pretending the legacy formats have a complete model.
 
 ```ts
-import {parseOle2, parseDoc, parseXls, parsePpt} from '@christophervr/ole2';
+import {parseOle2, parseDoc, parseXls, parsePpt, parseVsd} from '@christophervr/ole2';
 
-const document = parseOle2(bytes); // CfbDocument | DocDocument | XlsDocument | PptDocument
+const document = parseOle2(bytes); // CFB | DOC | XLS | PPT | VSD document classes
 if (document.kind === 'xls') document.sheets[0]!.cell(1, 0).value = 'Updated';
 
 const ppt = parseOle2<'ppt'>(pptBytes, {expect: 'ppt'});
@@ -23,20 +23,22 @@ xls.sheets[0]!.cell(1, 0).value = 'Unicode Ω 日本';
 const savedXls = xls.serialize();
 ```
 
-All four classes extend `Ole2DocumentBase`. DOC owns stable paragraph handles;
+All five classes extend `Ole2DocumentBase`. DOC owns stable paragraph handles;
 XLS owns stable tab/cell handles and exposes read-only workbook, style, formula
-and merge snapshots; PPT owns active slides with stable text identities. CFB
+and merge snapshots; PPT owns active slides with stable text/shape identities.
+VSD owns version 11 pages and shapes with stored values. CFB
 exposes existing stream handles by full storage path: `cfb.stream(['Custom',
 'Data']).bytes = replacement`. This operation edits the container and does not
 repair Office record offsets. No new directory entries are created.
 
 ## Checked parsing
 
-The generic is a format key (`'cfb' | 'doc' | 'xls' | 'ppt'`), not a document-class
+The generic is a format key (`'cfb' | 'doc' | 'xls' | 'ppt' | 'vsd'`), not a document-class
 cast. The overload requires `{expect: K}` for `parseOle2<K>` and validates that
 expectation at runtime. Both `parseOle2<'ppt'>(bytes)` and an explicit `'ppt'`
 generic combined with `{expect: 'xls'}` fail TypeScript compilation.
-`parseDoc`, `parseXls` and `parsePpt` return concrete checked classes.
+`parseDoc`, `parseXls`, `parsePpt` and `parseVsd` return concrete checked classes.
+Adding `vsd` widens the default union; exhaustive switch consumers must handle it.
 
 Default parsing returns a union discriminated by the immutable `kind` getter.
 Ambiguous root format streams or a malformed/encrypted/unsupported Office model
@@ -46,8 +48,9 @@ Checked Office parsing throws `Ole2DocumentError` instead of returning a false
 model. `{expect: 'cfb'}` explicitly selects container inspection for any valid
 compound file. Invalid CFB allocation/header parsing still throws.
 
-VSD/PUB page models are not implemented; those files remain container views with
-the existing structural/metadata inspection codecs available for compatibility.
+VSD version 11 has a bounded stored-value drawing model. Earlier binary versions
+remain unsupported for drawing decoding, with structural inspection available.
+PUB page models remain unimplemented.
 
 ## Mutation and serialization
 
@@ -57,7 +60,8 @@ format writers, validate the candidate model and commit only supported changes.
 An unsupported mutation throws `UnsupportedOle2EditError` with its reason before
 changing bytes, model values, `dirty` or `revision`. A no-op leaves them unchanged.
 Success marks `dirty` and increments `revision`. Existing handles observe later
-supported edits rather than retaining stale snapshots.
+supported edits rather than retaining stale snapshots. DOC character-run handles
+are revision snapshots and expire after a successful edit; reacquire `.runs`.
 
 `serialize()` returns a new byte array retaining all opaque data supported by the
 underlying preservation strategy. It does not reset dirty state, write a file or
@@ -68,9 +72,10 @@ internal adapter hooks, not a supported external mutation API.
 
 | Model | Supported mutations | Explicit limitations |
 | --- | --- | --- |
-| DOC | Existing plain paragraph text; guarded growth/shrink outside balanced main-story fields | No paragraph insertion/removal, run/table/object model writes, field-code/result editing or unsupported CP-table shifts; processing budgets apply |
-| XLS | Existing numeric cells; existing LABELSST/RK/NUMBER/MULRK cells to plain strings, including continued Unicode SSTs | No cell creation, formulas or recalculation; unsafe relocation records/layouts refused; selected rich string becomes plain while retaining XF and other aliases |
-| PPT | Existing active text atoms with fixed UTF-16 length and original encoding | No shape-to-text mapping, shape/run/notes edits or arbitrary text growth; mirrors, field/control changes and shared physical atoms refused |
+| DOC | Existing plain paragraph text; guarded growth/shrink outside balanced main-story fields; existing exclusive direct bold/italic operands | No style resolution, new formatting records, paragraph insertion/removal, table/object model writes, field-code/result editing or unsupported CP-table shifts; processing budgets apply |
+| XLS | Existing numeric/string cells; NUMBER/RK/MULRK to boolean/error and existing BOOLERR replacement | No cell creation, formulas or recalculation; unsupported type changes and unsafe relocation records/layouts refused; selected rich string becomes plain while retaining XF and other aliases |
+| PPT | Existing active fixed-length text; supported small-anchor rectangle/text-box bounds | Inline shape text is linked by validated identity; outline refs may remain unresolved. Group/mirror/inherited/rotated/large-anchor edits refuse; no general run/notes reconstruction |
+| VSD v11 | Existing same-length UTF-16 shape text; exclusive top-level literal transforms | No older-version model, formula/style/master evaluation, fields or structural creation; shared/overlapping blocks and dependent transform edits refuse |
 | CFB | Supported existing regular/mini stream resizing with path/hierarchy preservation | No new directory entries, external DIFAT expansion or variable-length v4 mini transitions; container support is separate from Office fidelity |
 
 ## Compatibility and migration

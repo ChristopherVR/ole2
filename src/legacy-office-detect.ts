@@ -53,7 +53,7 @@ export function identifyLegacyOffice(input: Uint8Array | ArrayBuffer): LegacyOff
 				inspection ? 'partial' : 'unsupported',
 				streams,
 				inspection
-					? 'Visio binary header and trailer inspected; standard document properties can be edited when present. Drawing content is not decoded or editable.'
+					? 'Visio binary header and trailer inspected; supported version 11 drawing models and guarded text/transform edits are available through parseVsd after separate checked decoding. Earlier versions retain structural inspection only.'
 					: 'VisioDocument stream detected, but the binary header is unsupported or invalid.',
 			);
 		}

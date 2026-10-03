@@ -4,15 +4,16 @@ export const apiPages = [
     "title": "Document models",
     "kicker": "CHECKED PARSING · TRANSACTIONAL EDITS",
     "description": "Typed editable legacy Office classes, checked format expectations and explicit serialization limits.",
-    "intro": "The primary API is parseOle2: a discriminated union of CfbDocument, DocDocument, XlsDocument and PptDocument. Concrete format helpers return checked editable classes.",
+    "intro": "The primary API is parseOle2: a checked discriminated union of CfbDocument, DocDocument, XlsDocument, PptDocument and VsdDocument. Concrete helpers return preserving editable classes.",
     "sections": [
       {
         "title": "Runtime-checked types",
         "body": "The generic is a format key, never an erased document-class cast. parseOle2<K> requires expect: K and validates the bytes.",
         "bullets": [
-          "Default kind narrows the union; parseDoc/parseXls/parsePpt return concrete classes.",
+          "Default kind narrows the union; parseDoc/parseXls/parsePpt/parseVsd return concrete classes.",
           "Wrong formats throw; ambiguous or unsupported automatic decoding returns a CFB view with diagnostics.",
-          "expect: cfb explicitly requests container inspection for any valid compound file."
+          "expect: cfb explicitly requests container inspection for any valid compound file.",
+          "The new vsd union variant requires exhaustive switch consumers to handle that kind."
         ]
       },
       {
@@ -36,6 +37,15 @@ export const apiPages = [
     "intro": "parseDoc returns a DocDocument with stable main-body paragraph handles. Supported text setters preserve opaque binary records and serialize the edited compound file without reconstructing unsupported content.",
     "sections": [
       {
+        "title": "Actual character runs",
+        "body": "paragraph.runs maps CLX pieces and CHPX formatting pages to character positions. styleIndex reads the PAPX paragraph style identifier.",
+        "bullets": [
+          "Direct bold/italic/font-size values are exposed separately from inherited or undecoded styling. Unknown SPRMs remain opaque.",
+          "Existing exclusive understood bold/italic operands can be set to absolute values. Shared blobs, opaque semantics and missing slots refuse.",
+          "Run handles expire after edits; reacquire paragraph.runs. Styles and piece PRMs are not resolved."
+        ]
+      },
+      {
         "title": "Document model",
         "body": "Read paragraph.text and assign supported replacement text, then call serialize(). Successful edits mark dirty and increment revision.",
         "bullets": [
@@ -46,7 +56,7 @@ export const apiPages = [
       },
       {
         "title": "Explicit limits",
-        "body": "The paragraph collection has fixed structure. Complete run, table, field and drawing models are not yet editable.",
+        "body": "The paragraph collection has fixed structure. Rich runs expose a bounded direct-formatting slice; tables, fields, styles and drawings are preserved without complete editable models.",
         "bullets": [
           "No paragraph insertion/removal or embedded paragraph breaks.",
           "Edits inside field code/result ranges and unsupported CP-dependent features are refused.",
@@ -75,7 +85,8 @@ export const apiPages = [
           "Existing NUMBER/RK/MULRK numeric values require exact original encoding.",
           "Existing LABELSST/RK/NUMBER/MULRK cells can become plain Unicode strings, including continued SST entries.",
           "Packed siblings, selected XF and unrelated records are preserved; supported BOUNDSHEET/INDEX/DBCELL/ExtSST pointers are updated.",
-          "Formula caches remain saved values; recalculationRequired signals that a consuming application must recalculate."
+          "Formula caches remain saved values; recalculationRequired signals that a consuming application must recalculate.",
+          "Existing NUMBER/RK/MULRK cells may become boolean/error BOOLERR records; existing BOOLERR values can be replaced. Cell type distinguishes formula, number, string, boolean, error and blank."
         ]
       },
       {
@@ -85,7 +96,8 @@ export const apiPages = [
           "No missing-cell creation, formula writing or evaluation.",
           "Unsafe pointer-bearing records and allocation layouts are refused atomically.",
           "A selected rich string becomes plain while other shared aliases retain their formatting.",
-          "Charts/drawings and general workbook construction are not modeled by this adapter."
+          "Charts/drawings and general workbook construction are not modeled by this adapter.",
+          "String-to-BOOLERR and BOOLERR-to-number/string conversions remain unsupported."
         ]
       },
       {
@@ -101,8 +113,17 @@ export const apiPages = [
     "title": "Legacy PowerPoint",
     "kicker": "PPT · POWERPOINT 97–2003",
     "description": "Read active legacy PPT slide text, make fixed-length preservation edits, and export a neutral WDeck model.",
-    "intro": "parsePpt returns a PptDocument with active slide identities and stable outline/inline text handles. Text atoms are not a complete shape model; unsupported records and streams remain opaque and preserved.",
+    "intro": "parsePpt returns a PptDocument with active slides, OfficeArt shape identities, explicit anchors and validated inline text references. Opaque binary content remains preserved.",
     "sections": [
+      {
+        "title": "Actual shapes and small-anchor edits",
+        "body": "slides[index].shapes exposes IDs, kind, flags, names, coordinate spaces and copied geometry snapshots. Bounds use exact master units, eight per PowerPoint point.",
+        "bullets": [
+          "Unmirrored top-level small-anchor rectangles and text boxes support bounded position and extent setters. Candidate geometry is reparsed before commit.",
+          "Shared, grouped, inherited, rotated/flipped, unknown-property and OOXML-mirrored geometry refuses editing.",
+          "Group and child coordinates remain local. Large ClientAnchor values are raw with unknown geometry; outline-to-shape text references can remain unresolved."
+        ]
+      },
       {
         "title": "Document model",
         "body": "Assign slides[index].texts[index].text and serialize() after a supported edit.",
@@ -115,7 +136,7 @@ export const apiPages = [
       },
       {
         "title": "Explicit limits",
-        "body": "Shapes, shape-to-text references, rich runs, notes, masters and animations are not decoded into editable model nodes in this release.",
+        "body": "The model exposes a bounded shape and text slice, with explicit resource budgets and target-specific refusal reasons.",
         "bullets": [
           "No arbitrary text growth or shape/layout mutation is implied.",
           "Encrypted PPT cannot produce a successful checked model.",
@@ -134,29 +155,38 @@ export const apiPages = [
     "slug": "visio",
     "title": "Legacy Visio",
     "kicker": "VSD · VISIO",
-    "description": "Validate structural facts in legacy Visio containers without claiming drawing or page parsing.",
-    "intro": "`inspectLegacyVisio` checks a legacy VSD compound file’s VisioDocument signature, version, and TrailerStream pointer bounds. It reports structural facts only.",
+    "description": "Read and preserve supported binary Visio version 11 pages, shapes, stored text and literal transforms.",
+    "intro": "parseVsd returns a VsdDocument for the supported binary version 11 drawing slice. This uses legacy binary records; Microsoft MS-VSDX describes a different XML format.",
     "sections": [
       {
-        "title": "What works",
-        "body": "The inspector validates the header signature, version-dependent pointer layout, trailer type, and trailer range against the declared document size. It returns stream names and trailer metadata when those checks pass.",
+        "title": "Typed drawing model",
+        "body": "pages and shapes expose real IDs, stored page dimensions/scale, explicit transforms, UTF-16 text and MoveTo/LineTo geometry.",
         "bullets": [
-          "Supports the validated V5 and V6+ pointer layouts.",
-          "The generic metadata API can read or update an existing SummaryInformation text property when its value fits the allocated slot.",
-          "Invalid or unsupported structures return `undefined` from the inspector."
+          "Version 11 only; unsupported versions fail checked parsing or remain diagnostic CFB inspection in automatic parsing.",
+          "Group/parent/master identities and unsupported geometry remain explicit; styles, masters and formulas are not evaluated.",
+          "Compressed pointer/record traversal has input, decoded-byte, depth and record budgets."
         ]
       },
       {
-        "title": "Known limits",
-        "body": "Visio shapes, pages, geometry, and drawing relationships are not decoded or editable. A valid TrailerStream pointer is not a parsed drawing.",
+        "title": "Preserving edits",
+        "body": "Supported shape.text and shape.transform setters serialize edited leaves and pointer ancestors while retaining original unknown record bytes and other CFB streams.",
         "bullets": [
-          "No page preview or rendering API is included.",
-          "No general VSD save or structural edit API is included.",
-          "Metadata edits do not change drawing content and do not add missing properties."
+          "Text retains UTF-16 length and control positions; fields, shared or overlapping allocations refuse.",
+          "Transform writes require an exclusive top-level literal transform with understood unit tags and no parent/master dependency.",
+          "Literal path points are not automatically scaled or recalculated when transform dimensions change."
+        ]
+      },
+      {
+        "title": "Evidence and limitations",
+        "body": "Authored fixtures passed independent libvisio 0.1.7 callback comparisons and Windows IStorage preservation checks. Native Visio fidelity remains unverified.",
+        "bullets": [
+          "Earlier binary versions, general ShapeSheet evaluation, styles, rich text, embedded content and general drawing reconstruction remain unsupported.",
+          "inspectLegacyVisio still validates the signature/version/TrailerStream pointer for compatible inspection layouts; inspection is separate from drawing decoding.",
+          "No native Visio or complete rendering/roundtrip parity claim is made."
         ]
       }
     ],
-    "example": "import { inspectLegacyVisio, readLegacyOfficeMetadata } from '@christophervr/ole2';\n\nconst inspection = inspectLegacyVisio(vsdBytes);\nif (inspection) {\n  console.log(inspection.version, inspection.trailerLength);\n  console.log(readLegacyOfficeMetadata(vsdBytes));\n}"
+    "example": "import { parseVsd } from '@christophervr/ole2';\n\nconst drawing = parseVsd(vsdBytes);\nconst shape = drawing.pages[0].shapes[0];\nshape.text = 'World\\n'; // Same UTF-16 length as owned Hello + LF fixture.\nshape.transform = { ...shape.transform, pinX: 6, width: 5 };\nconst saved = drawing.serialize();"
   },
   {
     "slug": "publisher",

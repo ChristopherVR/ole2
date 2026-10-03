@@ -4,6 +4,8 @@ export * from './ole2-document-base.js';
 export * from './doc-document.js';
 export * from './xls-document.js';
 export * from './ppt-document.js';
+export * from './vsd-document.js';
+export { VsdError, type VsdTransform, type VsdGeometry } from './vsd-reader.js';
 export * from './ole2-parser-types.js';
 export * from './ole2-parser-write.js';
 export * from './ole-document-doc-cfb.js';

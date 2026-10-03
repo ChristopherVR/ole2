@@ -20,12 +20,12 @@ npm install @christophervr/ole2
 
 ## Features
 
-- Unified checked parsing into editable DOC/XLS/PPT classes and an explicit CFB container view; supported model setters preserve opaque bytes and serialize transactionally.
+- Unified checked parsing into editable DOC/XLS/PPT/VSD classes and an explicit CFB container view; supported model setters preserve opaque bytes and serialize transactionally. Adding VSD widens the default union, so exhaustive switches must handle `kind: 'vsd'`.
 - MS-CFB/OLE2 compound-file stream reading and writing, including mini streams, FAT/DIFAT and directory metadata.
 - Word 97-2003 binary `.doc` main-body text reading and guarded existing-paragraph edits, including fixed-length edits that retain original formatting runs and character-position tables.
 - Excel BIFF8 `.xls` workbook reading (`readXlsWorkbook`: every sheet, cell values, cached formula results and decoded formula text, styles, merges, column and row sizes, views, comments, hyperlinks, defined names), plus first-worksheet previews and bounded numeric/string cell edits.
 - PowerPoint 97-2003 `.ppt` active-slide text reading and fixed-length text edits that preserve surrounding bytes, plus binary export from a framework-neutral model (text, shapes, pictures, notes, embedded objects and optional RC4 encryption).
-- Visio and Publisher binary structure inspection, plus standard OLE document-property reading and bounded text-property edits. Drawing and publication page content is not yet decoded or editable.
+- Binary Visio version 11 pages/shapes, explicit stored transforms, UTF-16 text and move/line geometry. Supported same-length text and exclusive literal-transform edits preserve unknown bytes. Earlier versions, general styles/masters/ShapeSheet evaluation, rich text and native Visio fidelity remain unsupported. Publisher remains structural inspection.
 - Path-based compound stream edits preserve nested storage layout and all bytes outside the edited stream.
 - `resizeCompoundFileStream` grows or shrinks regular and mini streams in supported v3 containers, including transitions across the 4096-byte cutoff, while retaining nested storage paths, unknown streams and original directory metadata. It returns an explicit result and refusal reason for unsupported layouts.
 - No browser or framework dependency; typed-array/ArrayBuffer inputs and ESM JavaScript with TypeScript declarations.
@@ -36,7 +36,7 @@ The primary API returns a typed editable document. `kind` narrows the default
 union; a generic format key requires a runtime expectation:
 
 ```ts
-import { parseOle2, parseDoc, parseXls, parsePpt } from '@christophervr/ole2';
+import { parseOle2, parseDoc, parseXls, parsePpt, parseVsd } from '@christophervr/ole2';
 
 const document = parseOle2(bytes);
 if (document.kind === 'xls') document.sheets[0]!.cell(1, 0).value = 'Updated';

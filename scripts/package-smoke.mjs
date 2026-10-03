@@ -51,12 +51,13 @@ assert.equal(installed.name, '@christophervr/ole2');
 await writeFile(join(directory, 'fixture.xls'), await readFile(new URL('../test/fixtures/xls/workbook-features.xls', import.meta.url)));
 await writeFile(join(directory, 'fixture.doc'), await readFile(new URL('../test/fixtures/doc/main-field.doc', import.meta.url)));
 await writeFile(join(directory, 'fixture.ppt'), await readFile(new URL('../test/fixtures/ppt/native-text.ppt', import.meta.url)));
+await writeFile(join(directory, 'fixture.vsd'), await readFile(new URL('../test/fixtures/vsd/owned-v11.vsd', import.meta.url)));
 await writeFile(
 	join(directory, 'verify.mjs'),
 	`
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseDoc, parseXls, parsePpt, parseCompoundFile, Ole2DocumentError } from '@christophervr/ole2';
+import { parseDoc, parseXls, parsePpt, parseVsd, parseCompoundFile, Ole2DocumentError } from '@christophervr/ole2';
 import { editXlsPreservedStringCell, readXlsWorkbook } from '@christophervr/ole2';
 import { editXlsPreservedStringCell as subpathStringEditor } from '@christophervr/ole2/legacy-excel-preserved-string-cell';
 import { buildOle2, parseOle2, readCompoundFileStream, replaceCompoundFileStream, resizeCompoundFileStream, readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, editXlsNumericCell, editXlsStringCell, readPptSlideTexts, editPptSlideText, tryWriteOleDocParagraphEdit } from '@christophervr/ole2';
@@ -103,6 +104,18 @@ const pptModel = parsePpt(new Uint8Array(readFileSync(new URL('./fixture.ppt', i
 pptModel.slides[0].texts[0].text = 'Native title updated';
 assert.equal(parsePpt(pptModel.serialize()).slides[0].texts[0].text, 'Native title updated');
 assert.ok(parseCompoundFile(pptModel.serialize().buffer).getStream('PowerPoint Document'));
+const vsdModel = parseVsd(new Uint8Array(readFileSync(new URL('./fixture.vsd', import.meta.url))));
+assert.equal(vsdModel.kind, 'vsd');
+const shape = vsdModel.pages[0].shapes[0];
+assert.equal(shape.text, 'Hello\\n');
+shape.text = 'World\\n';
+shape.transform = { ...shape.transform, pinX: 6, width: 5 };
+const savedVsd = vsdModel.serialize();
+assert.equal(parseOle2(savedVsd).kind, 'vsd');
+assert.equal(parseVsd(savedVsd).pages[0].shapes[0].text, 'World\\n');
+assert.equal(parseVsd(savedVsd).pages[0].shapes[0].transform.pinX, 6);
+assert.deepEqual([...vsdModel.getStream('OpaqueUnknown')], [9, 4, 8, 3, 5]);
+assert.throws(() => parseVsd(workbook), Ole2DocumentError);
 const invalid = new Uint8Array([1, 2, 3]);
 assert.equal(editXlsNumericCell(invalid, { row: 0, col: 0, value: 1 }).bytes, invalid);
 const ppt = await buildPptFile({ widthEmu: 9144000, heightEmu: 5143500, slides: [{ shapes: [] }], pictures: [] });
@@ -116,13 +129,21 @@ run(process.execPath, [join(directory, 'verify.mjs')], directory);
 // Newly parsed metadata must remain additive for existing TypeScript callers.
 await writeFile(join(directory, 'verify-types.ts'), `
 import { readDocFib, readFcLcbAt, type DocFib, type DocCfbUnwrap } from '@christophervr/ole2';
-import { parseOle2, parseDoc, parseXls, parsePpt, type Ole2File, type PptDocument } from '@christophervr/ole2';
+import { parseOle2, parseDoc, parseXls, parsePpt, parseVsd, type Ole2File, type PptDocument, type VsdDocument } from '@christophervr/ole2';
 const input = new Uint8Array();
 const model = parseOle2(input);
 const compatible: Ole2File = model;
 if (model.kind === 'doc') model.paragraphs[0]!.text = 'paragraph';
 if (model.kind === 'xls') model.sheets[0]!.cell(0,0).value = 'cell';
 if (model.kind === 'ppt') model.slides[0]!.texts[0]!.text = 'fixed';
+if (model.kind === 'vsd') model.pages[0]!.shapes[0]!.text = 'fixed';
+const checkedVsd: VsdDocument = parseOle2<'vsd'>(input, {expect: 'vsd'});
+// @ts-expect-error Checked VSD parsing requires its runtime expectation.
+parseOle2<'vsd'>(input);
+// @ts-expect-error VSD expectations cannot be substituted for another generic.
+parseOle2<'vsd'>(input, {expect: 'ppt'});
+// @ts-expect-error VSD page structure is fixed.
+parseVsd(input).pages.push({id: 1, shapes: []});
 const checked: PptDocument = parseOle2<'ppt'>(input, {expect: 'ppt'});
 const inferred: PptDocument = parseOle2(input, {expect: 'ppt'});
 // @ts-expect-error A generic format requires a runtime expectation.
@@ -136,6 +157,7 @@ parseDoc(input).paragraphs.push({index: 0, text: 'new'});
 // @ts-expect-error Model kind is immutable.
 parseXls(input).kind = 'doc';
 void compatible; void checked; void inferred; void parsePpt;
+void checkedVsd;
 const fib: DocFib = {
   flags1Offset: 10, flags1: 0, tableStreamName: '1Table', cbMacOffset: 64,
   cbMac: 4096, ccpTextOffset: 76, ccpText: 0, plcfbteChpx: { fc: 0, lcb: 0 },

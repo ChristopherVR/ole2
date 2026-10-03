@@ -34,7 +34,9 @@ try {
 	assert.match(word, /href="\.\.\/\.\.\/api\/excel\/"/);
 	const visio = await readFile(join(site, 'api/visio/index.html'), 'utf8');
 	assert.match(visio, /TrailerStream pointer/);
-	assert.match(visio, /not decoded or editable/i);
+	assert.match(visio, /parseVsd/);
+	assert.match(visio, /Version 11 only/);
+	assert.match(visio, /Native Visio fidelity remains unverified/);
 	assert.match(visio, /data-language="typescript"/);
 	assert.doesNotMatch(visio, /\{\{[^}]+\}\}/);
 } finally {
