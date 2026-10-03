@@ -64,7 +64,7 @@ describe('XlsDocument transactional adapter', () => {
   const numeric = sheet.cell(1, 1);
   expect(() => { numeric.value = Math.PI; }).toThrow(UnsupportedOle2EditError);
   expect(() => { numeric.value = Infinity; }).toThrow(UnsupportedOle2EditError);
-  expect(() => { numeric.value = true; }).toThrow(UnsupportedOle2EditError);
+  expect(() => { numeric.value = null; }).toThrow(UnsupportedOle2EditError);
   const text = sheet.cells.find(c => typeof c.value === 'string' && !c.formula)!;
   expect(() => { text.value = 10; }).toThrow(UnsupportedOle2EditError);
   expect(document.serialize()).toEqual(input);
