@@ -294,7 +294,11 @@ counts. Double and none replace one existing byte; single restores source bytes.
 The owned BIFF8 `xls/workbook-cell-types.xls` fixture, SHA256
 `6cf446bec16da6acca52b48c18521f53fef609e0a2483dd8437a7b9097a89387`,
 passed six native Excel 16 conversions of its three explicit boolean/error cells
-to `37.125` or the recorded plain string. The selected value/type changed; all
+to `37.125` or plain `Converted 漢字 😀` (the code points are recorded by the
+reproduction driver). `scripts/prepare-native-xls-boolerr-edits.mjs` produces
+all six native-tested artifacts and checks atomic refusals before and after
+edits; generation alone does not launch Excel or establish native validation.
+The selected value/type changed; all
 other captured values, formulas, saved caches, fonts, styles, merges, counts,
 comments and dimensions remained exact. Native save/reopen passed. Explicit
 `xlNormalLoad=0` was used; the application did not expose RepairMode, so no
