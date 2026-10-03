@@ -67,10 +67,15 @@ export function buildBteTableBytes(table: BteTable): Uint8Array {
 
 /** Find which range (and thus page) of a BTE table covers `fc`. */
 function findBteRangeIndex(table: BteTable, fc: number): number {
-	for (let i = 0; i < table.pns.length; i++) {
-		if (fc >= table.fcs[i]! && fc < table.fcs[i + 1]!) {
-			return i;
-		}
+	// Parsed BTE boundaries are strictly ascending. Rich paragraph inspection
+	// performs this lookup for every mark; linear scans multiply both budgets.
+	let low = 0, high = table.pns.length;
+	while (low < high) {
+		const middle = low + Math.floor((high - low) / 2);
+		if (fc < table.fcs[middle]!) high = middle;
+		else if (fc >= table.fcs[middle + 1]!) low = middle + 1;
+		else if (fc >= table.fcs[middle]!) return middle;
+		else break;
 	}
 	throw new Error(`FC ${fc} is not covered by any BTE range`);
 }
