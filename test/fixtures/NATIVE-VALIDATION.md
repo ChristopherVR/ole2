@@ -110,7 +110,8 @@ Use the native snapshot script to compare generated files against their original
 fixture baselines with explicit declared text/value changes. Field locations
 should be captured for the DOC case. These are captured semantic checks; neither
 the driver nor successful serialization claims rendered or full-format fidelity.
-# Optional character and cell-type probes
+
+## Optional character and cell-type probes
 
 Use `-CaptureWordCharacterFonts` (bounded by `-MaxWordCharacters`, default 4096)
 for selected small DOC fixture edits. This records resolved native appearance per
