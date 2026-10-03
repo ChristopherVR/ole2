@@ -65,6 +65,15 @@ describe('preserving v4 regular stream resize', () => {
 		expect(readCompoundFileStream(output, ['ObjectPool', 'Target'])).toEqual(payload(5000, 13));
 		expect(input).toEqual(old);
 	});
+	it('retains existing mini-stream payloads during regular resize and fixed-length mini edits', () => {
+		const input = v4Cfb([{ path: ['Target'], bytes: payload(5000) }, { path: ['Tiny'], bytes: payload(63, 9) }]);
+		const output = required(input, ['Target'], payload(12000, 11));
+		expect(readCompoundFileStream(output, ['Tiny'])).toEqual(payload(63, 9));
+		const edited = required(output, ['Tiny'], payload(63, 55));
+		expect(readCompoundFileStream(edited, ['Tiny'])).toEqual(payload(63, 55));
+		expect(readCompoundFileStream(edited, ['Target'])).toEqual(payload(12000, 11));
+		expect(resizeCompoundFileStream(output, ['Tiny'], payload(64))).toEqual({ ok: false, bytes: output, reason: 'unsupported-mini-stream' });
+	});
 });
 
 describe('v4 malformed and unsupported inputs fail without mutation', () => {

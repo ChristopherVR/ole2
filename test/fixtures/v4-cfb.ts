@@ -3,7 +3,6 @@ export function v4Cfb(streams: Array<{ path: string[]; bytes: Uint8Array }>): Ui
 	const END = 0xfffffffe, FREE = 0xffffffff, SECTOR = 4096;
 	const nodes = new Map<string, { path: string[]; bytes?: Uint8Array; id: number; start: number }>();
 	for (const stream of streams) {
-		if (stream.bytes.length < 4096) throw new Error('Fixture only supports regular streams');
 		for (let depth = 1; depth <= stream.path.length; depth++) {
 			const path = stream.path.slice(0, depth), key = path.join('/');
 			if (!nodes.has(key)) nodes.set(key, { path, id: nodes.size + 1, start: END });
@@ -12,7 +11,14 @@ export function v4Cfb(streams: Array<{ path: string[]; bytes: Uint8Array }>): Ui
 	}
 	const directories = Math.ceil((nodes.size + 1) / 32);
 	let sectors = directories;
-	for (const node of nodes.values()) if (node.bytes) {
+	const miniNodes = [...nodes.values()].filter(node => node.bytes && node.bytes.length > 0 && node.bytes.length < 4096);
+	let miniCount = 0;
+	for (const node of miniNodes) { node.start = miniCount; miniCount += Math.ceil(node.bytes!.length / 64); }
+	const miniBytes = miniCount * 64, rootStart = miniCount ? sectors : END;
+	sectors += Math.ceil(miniBytes / SECTOR);
+	const miniFatCount = Math.ceil(miniCount / 1024), miniFatStart = miniCount ? sectors : END;
+	sectors += miniFatCount;
+	for (const node of nodes.values()) if (node.bytes && node.bytes.length >= 4096) {
 		node.start = sectors;
 		sectors += Math.ceil(node.bytes.length / SECTOR);
 	}
@@ -25,12 +31,18 @@ export function v4Cfb(streams: Array<{ path: string[]; bytes: Uint8Array }>): Ui
 	view.setUint16(0x1e, 12, true); view.setUint16(0x20, 6, true);
 	view.setUint32(0x28, directories, true); view.setUint32(0x2c, fats, true);
 	view.setUint32(0x30, 0, true); view.setUint32(0x38, 4096, true);
-	view.setUint32(0x3c, END, true); view.setUint32(0x44, END, true);
+	view.setUint32(0x3c, miniFatStart, true); view.setUint32(0x40, miniFatCount, true); view.setUint32(0x44, END, true);
 	for (let i = 0; i < 109; i++) view.setUint32(0x4c + i * 4, i < fats ? sectors + i : FREE, true);
 	for (let i = 0; i < fats; i++) out.fill(0xff, (sectors + i + 1) * SECTOR, (sectors + i + 2) * SECTOR);
 	const fat = (id: number, next: number) => view.setUint32((sectors + Math.floor(id / 1024) + 1) * SECTOR + id % 1024 * 4, next, true);
 	for (let id = 0; id < directories; id++) fat(id, id + 1 === directories ? END : id + 1);
 	for (let i = 0; i < fats; i++) fat(sectors + i, 0xfffffffd);
+	const rootCount = Math.ceil(miniBytes / SECTOR);
+	for (let i = 0; i < rootCount; i++) fat(rootStart + i, i + 1 === rootCount ? END : rootStart + i + 1);
+	for (let i = 0; i < miniFatCount; i++) {
+		fat(miniFatStart + i, i + 1 === miniFatCount ? END : miniFatStart + i + 1);
+		out.fill(0xff, (miniFatStart + i + 1) * SECTOR, (miniFatStart + i + 2) * SECTOR);
+	}
 	const at = (id: number) => SECTOR + id * 128;
 	const entry = (id: number, name: string, type: number, start: number, size: number) => {
 		const offset = at(id);
@@ -40,14 +52,19 @@ export function v4Cfb(streams: Array<{ path: string[]; bytes: Uint8Array }>): Ui
 		for (const field of [68, 72, 76]) view.setUint32(offset + field, FREE, true);
 		view.setUint32(offset + 116, start, true); view.setUint32(offset + 120, size, true);
 	};
-	entry(0, 'Root Entry', 5, END, 0);
+	entry(0, 'Root Entry', 5, rootStart, miniBytes);
 	for (const node of nodes.values()) {
 		entry(node.id, node.path.at(-1)!, node.bytes ? 2 : 1, node.start, node.bytes?.length ?? 0);
-		if (node.bytes) {
+		if (node.bytes && node.bytes.length >= 4096) {
 			out.set(node.bytes, (node.start + 1) * SECTOR);
 			const count = Math.ceil(node.bytes.length / SECTOR);
 			for (let i = 0; i < count; i++) fat(node.start + i, i + 1 === count ? END : node.start + i + 1);
 		}
+	}
+	for (const node of miniNodes) {
+		out.set(node.bytes!, (rootStart + 1) * SECTOR + node.start * 64);
+		const count = Math.ceil(node.bytes!.length / 64);
+		for (let i = 0; i < count; i++) view.setUint32((miniFatStart + 1) * SECTOR + (node.start + i) * 4, i + 1 === count ? END : node.start + i + 1, true);
 	}
 	const attach = (parent: number, path: string[]) => {
 		const children = [...nodes.values()].filter(n => n.path.length === path.length + 1 && n.path.slice(0, -1).join('/') === path.join('/'));
