@@ -9,6 +9,8 @@ import type { DocParagraphAlignment } from './doc-document.js';
 
 const LIMIT = 65_536;
 const SPRM_LIMIT = 262_144;
+// PnFkpPapx/PnFkpChpx have a 22-bit pn and 10 undefined bits that MUST be ignored.
+const PAGE_NUMBER_MASK = 0x003fffff;
 const ALIGNMENTS: readonly DocParagraphAlignment[] = ['start', 'center', 'end', 'justify'];
 // No reset, style-change, table or huge-PAPX semantics. Legacy physical alignment
 // is understood only as a unique preceding matching compatibility mirror.
@@ -59,7 +61,7 @@ function inspect(input: Uint8Array) {
 	const view = new DataView(word.buffer, word.byteOffset, word.byteLength), rows: Row[] = [];
 	const sprmBudget = { remaining: SPRM_LIMIT };
 	for (let pageIndex = 0; pageIndex < papx.pns.length; pageIndex++) {
-		const page = papx.pns[pageIndex]! * 512;
+		const page = (papx.pns[pageIndex]! & PAGE_NUMBER_MASK) * 512;
 		if (page > word.length - 512) throw new Error('invalid-formatting');
 		const count = word[page + 511]!, header = (count + 1) * 4 + count * 13;
 		if (!count || header > 511 || rows.length + count > LIMIT) throw new Error('resource-limit');
@@ -122,7 +124,7 @@ export function writeDocParagraphAlignment(input: Uint8Array, index: number, ali
 	const extension = parsed.fib.fibRgFcLcbOffset + parsed.fib.fibRgFcLcbCount * 8;
 	const fibEnd = extension + 2 + new DataView(parsed.word.buffer, parsed.word.byteOffset, parsed.word.byteLength).getUint16(extension, true) * 2;
 	if (row.blob < fibEnd || parsed.rows.some((r) => r !== row && r.blob && r.blob < row.blobEnd && row.blob < r.blobEnd) ||
-		parsed.chpx.pns.includes(Math.floor(row.blob / 512)) ||
+		parsed.chpx.pns.some((pn) => (pn & PAGE_NUMBER_MASK) === Math.floor(row.blob / 512)) ||
 		parsed.pieces.some((p) => p.fc < row.blobEnd && row.blob < p.fc + (p.cpEnd - p.cpStart) * (p.compressed ? 1 : 2))) throw new Error('aliased-formatting');
 	// Section exceptions are also stored in WordDocument; reject known aliases.
 	const sed = parsed.fib.sed;

@@ -178,4 +178,21 @@ describe('direct logical PAPX paragraph alignment', () => {
 		expect(doc.serialize()).toStrictEqual(input);
 		expect(doc.dirty).toBe(false);
 	});
+
+	it('ignores and preserves reserved page-number bits while detecting CHPX page aliases hidden by them', () => {
+		const { cfb, word, fib, papx, page } = layout(), table = cfb.tableBytes.slice();
+		const view = new DataView(table.buffer), papxAt = fib.plcfbtePapx.fc + (papx.pns.length + 1) * 4;
+		view.setUint32(papxAt, papx.pns[0]! + 0xffc00000, true);
+		const input = cfb.rewrap(word, table), doc = parseDoc(input);
+		expect(doc.paragraphs[1]!.directAlignment).toBe('center');
+		doc.paragraphs[1]!.directAlignment = 'justify';
+		expect(doc.serialize().filter((v, i) => v !== input[i]).length).toBe(2);
+		expect(unwrapDocBytes(doc.serialize())!.tableBytes).toStrictEqual(table);
+		const chpx = parseBteTable(table, fib.plcfbteChpx);
+		view.setUint32(fib.plcfbteChpx.fc + (chpx.pns.length + 1) * 4, page / 512 + 0xffc00000, true);
+		const alias = cfb.rewrap(word, table), refused = parseDoc(alias);
+		expect(() => { refused.paragraphs[1]!.directAlignment = 'justify'; }).toThrow('aliased-formatting');
+		expect(refused.serialize()).toStrictEqual(alias);
+		expect(refused.dirty).toBe(false);
+	});
 });
