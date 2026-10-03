@@ -72,9 +72,9 @@ internal adapter hooks, not a supported external mutation API.
 
 | Model | Supported mutations | Explicit limitations |
 | --- | --- | --- |
-| DOC | Existing plain paragraph text; guarded growth/shrink outside balanced main-story fields; existing exclusive direct bold/italic and font-size operands | No style resolution, new formatting records, paragraph insertion/removal, table/object model writes, field-code/result editing or unsupported CP-table shifts; processing budgets apply |
-| XLS | Existing numeric/string cells; NUMBER/RK/MULRK to boolean/error and existing BOOLERR replacement | No cell creation, formulas or recalculation; unsupported type changes and unsafe relocation records/layouts refused; selected rich string becomes plain while retaining XF and other aliases |
-| PPT | Existing active fixed-length text; supported small-anchor rectangle/text-box bounds | Inline shape text is linked by validated identity; outline refs may remain unresolved. Group/mirror/inherited/rotated/large-anchor edits refuse; no general run/notes reconstruction |
+| DOC | Existing plain paragraph text; guarded growth/shrink outside balanced main-story fields; existing exclusive direct bold/italic, font-size and logical paragraph-alignment operands | No style resolution, new formatting records, paragraph insertion/removal, table/object model writes, field-code/result editing or unsupported CP-table shifts; processing budgets apply |
+| XLS | Existing numeric/string cells; physical BLANK/MULBLANK to number/plain string/boolean/error; NUMBER/RK/MULRK to boolean/error and existing BOOLERR replacement | Missing cells, merged followers, formulas, recalculation, unsupported type changes and unsafe relocation records/layouts refuse; selected rich string becomes plain while retaining XF and other aliases |
+| PPT | Existing active fixed-length slide and notes-body text; supported small-anchor rectangle/text-box bounds | Inline shape text is linked by validated identity; outline refs may remain unresolved. Group/mirror/inherited/rotated/large-anchor edits refuse; no notes creation, field replacement or general rich-run reconstruction |
 | VSD v11 | Existing same-length UTF-16 shape text; exclusive top-level literal transforms within an unchanged stored block allocation | No older-version model, formula/style/master evaluation, fields or structural creation; block relocation, shared/overlapping blocks and dependent transform edits refuse |
 | CFB | Supported existing regular/mini stream resizing with path/hierarchy preservation | No new directory entries, external DIFAT expansion or variable-length v4 mini transitions; container support is separate from Office fidelity |
 
@@ -83,13 +83,43 @@ its byte-exact no-op serialization. Its own save/reopen preserved all captured
 fields. The released 0.9.0 VSD text writer returned a corrupt file after an
 equal-length `Hello\n\n` to `World\n\n` edit: relocating the page block was
 rejected by Visio even though the CFB container and parser self-roundtrip passed.
-The writer now refuses edits whose encoded block cannot retain its original
-allocation, without changing bytes, dirty state or revision. This containment
-does not establish native acceptance for every admitted write. The authored
+The 0.9.1 containment refused that edit. The writer now uses bounded compression
+to fit eligible edits into the original allocation without relocating any page
+or ancestor block. The native `World\n\n` output opens and survives native
+save/reopen, with only the captured target text changed. Insufficient capacity,
+shared blocks and compression budgets still refuse without changing bytes,
+dirty state or revision. This establishes the tested text case, not native
+acceptance for every admitted write. The authored
 synthetic fixture was also rejected by Visio; its libvisio results are separate
 parser-mechanics evidence. Stored native text retains a terminal paragraph LF
 that the COM `Text` property omits. Positive master/layer fidelity and rendering
 remain unverified.
+
+`paragraph.directAlignment` reports a direct logical value: `'start'`, `'center'`,
+`'end'` or `'justify'`. Undefined means inherited or undecoded alignment. A setter
+replaces an exclusive existing modern PAPX operand; matching legacy mirrors
+admit only center/justify and update both operands. Legacy-only, conflicting,
+shared, opaque or direction-dependent mirrored values refuse. Paragraph handles
+remain stable across edits. Inspection bounds aggregate SPRM allocation to
+262,144 records. Native Word center/justify edits and save/reopen preserve the
+other captured paragraph and character fields; restoration is byte-exact.
+
+`cell.value` can fill an existing physical BIFF8 BLANK or one cell in MULBLANK.
+The selected XF and neighboring blank records remain intact. This does not
+create a missing cell or clear an existing value implicitly. Native Excel
+normal-load and save/reopen comparisons cover number, plain string, boolean and
+error values while retaining captured formatting, anchors and other sheets.
+
+`slide.notesStatus` distinguishes `'present'`, `'absent'` and `'unsupported'`;
+`slide.notesDiagnostic` explains unsupported notes. For present notes,
+`slide.notes.texts` exposes validated text atoms, including their `role`,
+`encoding` and `editRefusal`. Only an eligible `'body'` atom accepts a same-length
+UTF-16 replacement with supported controls/codepage and no rich runs or mirrors.
+Unknown fields remain readable where validated and preserved. Malformed notes
+do not prevent a valid slide model from opening. Overlapping live objects or
+save-history metadata refuse writes. Native PowerPoint comparisons cover ASCII
+and Unicode notes; native saves may regenerate note shape IDs, so saved output
+is compared against an unchanged native-save control.
 
 For DOC, `doc.paragraphs[index].runs[runIndex].directFontSizePoints = 13.5`
 replaces an existing exclusive direct `sprmCHps` operand. Values must be primitive

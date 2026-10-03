@@ -28,10 +28,12 @@ relocation controls failed even without semantic changes. The old handcrafted
 fixture and its edits were rejected as an unrecognized version
 (`-2032466854`), despite earlier independent libvisio acceptance.
 
-Reproduce the safety gate after building the reviewed package:
+This is the historical 0.9.1 containment gate. Current bounded-compression text
+writes admit the tested World edit; this refusal driver requires the explicit
+trusted 0.9.1 build, rather than the current dist:
 
 ```powershell
-node scripts/prepare-native-vsd-refusal.mjs
+node scripts/prepare-native-vsd-refusal.mjs C:/trusted-ole2-0.9.1/dist/index.js
 pwsh -NoProfile -File scripts/native-visio-snapshot.ps1 -InputPath .native-validation/native-visio/native-noop.vsd -OutputPath .native-validation/native-visio/noop.json
 pwsh -NoProfile -File scripts/native-visio-snapshot.ps1 -InputPath .native-validation/native-visio/native-refused.vsd -OutputPath .native-validation/native-visio/refused.json
 ```

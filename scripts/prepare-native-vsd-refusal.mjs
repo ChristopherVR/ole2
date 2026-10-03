@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 // Accept only explicitly supplied trusted built ole2 modules. No Office or
 // document code is executed by this driver; COM is a separate native gate.
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
-const modulePath=resolve(process.argv[2]??join(root,'dist/index.js'));
+if(!process.argv[2]) throw new Error('Historical 0.9.1 containment gate: supply an explicit trusted built 0.9.1 dist/index.js. Current bounded text writers admit the tested World edit.');
+const modulePath=resolve(process.argv[2]);
 const output=resolve(process.argv[3]??join(root,'.native-validation/native-visio'));
 const {parseVsd}=await import(pathToFileURL(modulePath).href);
 const sourcePath=join(root,'test/fixtures/vsd/native-visio16-v11.vsd');

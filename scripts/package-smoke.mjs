@@ -49,8 +49,10 @@ const installed = JSON.parse(
 );
 assert.equal(installed.name, '@christophervr/ole2');
 await writeFile(join(directory, 'fixture.xls'), await readFile(new URL('../test/fixtures/xls/workbook-features.xls', import.meta.url)));
+await writeFile(join(directory, 'fixture-blanks.xls'), await readFile(new URL('../test/fixtures/xls/workbook-blanks.xls', import.meta.url)));
 await writeFile(join(directory, 'fixture.doc'), await readFile(new URL('../test/fixtures/doc/main-field.doc', import.meta.url)));
 await writeFile(join(directory, 'fixture-size.doc'), await readFile(new URL('../test/fixtures/doc/rich-size-runs.doc', import.meta.url)));
+await writeFile(join(directory, 'fixture-alignment.doc'), await readFile(new URL('../test/fixtures/doc/paragraph-alignment.doc', import.meta.url)));
 await writeFile(join(directory, 'fixture.ppt'), await readFile(new URL('../test/fixtures/ppt/native-text.ppt', import.meta.url)));
 await writeFile(join(directory, 'fixture.vsd'), await readFile(new URL('../test/fixtures/vsd/owned-v11.vsd', import.meta.url)));
 await writeFile(join(directory, 'fixture-native.vsd'), await readFile(new URL('../test/fixtures/vsd/native-visio16-v11.vsd', import.meta.url)));
@@ -104,14 +106,35 @@ const xlsModel = parseXls(workbook);
 xlsModel.sheets[0].cell(1,0).value = stringValue;
 assert.equal(parseXls(xlsModel.serialize()).sheets[0].cell(1,0).value, stringValue);
 assert.equal(xlsModel.dirty, true);
+const blankModel = parseXls(new Uint8Array(readFileSync(new URL('./fixture-blanks.xls', import.meta.url))));
+assert.equal(blankModel.sheets[0].cell(0, 0).type, 'blank');
+blankModel.sheets[0].cell(0, 0).value = 3.25;
+blankModel.sheets[0].cell(0, 1).value = true;
+const blankSaved = parseXls(blankModel.serialize());
+assert.equal(blankSaved.sheets[0].cell(0, 0).value, 3.25);
+assert.equal(blankSaved.sheets[0].cell(0, 1).value, true);
+assert.equal(blankSaved.sheets[0].cell(0, 2).type, 'blank');
+assert.equal(blankSaved.sheets[1].cell(0, 0).value, 'Later text anchor');
 assert.throws(() => parsePpt(workbook), Ole2DocumentError);
 const docModel = parseDoc(new Uint8Array(readFileSync(new URL('./fixture.doc', import.meta.url))));
 docModel.paragraphs[0].text = 'Model paragraph edit.';
 assert.equal(parseDoc(docModel.serialize()).paragraphs[0].text, 'Model paragraph edit.');
+const alignedModel = parseDoc(new Uint8Array(readFileSync(new URL('./fixture-alignment.doc', import.meta.url))));
+assert.equal(alignedModel.paragraphs[1].directAlignment, 'center');
+alignedModel.paragraphs[1].directAlignment = 'justify';
+assert.equal(parseDoc(alignedModel.serialize()).paragraphs[1].directAlignment, 'justify');
 const pptModel = parsePpt(new Uint8Array(readFileSync(new URL('./fixture.ppt', import.meta.url))));
 pptModel.slides[0].texts[0].text = 'Native title updated';
 assert.equal(parsePpt(pptModel.serialize()).slides[0].texts[0].text, 'Native title updated');
 assert.ok(parseCompoundFile(pptModel.serialize().buffer).getStream('PowerPoint Document'));
+assert.equal(pptModel.slides[0].notesStatus, 'present');
+const noteBodies = pptModel.slides[0].notes.texts.filter(t => t.role === 'body');
+assert.equal(noteBodies.length, 1);
+assert.equal(noteBodies[0].text, 'Synthetic notes retained.');
+noteBodies[0].text = 'Synthetic notes modified.';
+const notesSaved = parsePpt(pptModel.serialize());
+assert.equal(notesSaved.slides[0].notes.texts.find(t => t.role === 'body').text, 'Synthetic notes modified.');
+assert.equal(notesSaved.slides[0].texts[0].text, 'Native title updated');
 const vsdModel = parseVsd(new Uint8Array(readFileSync(new URL('./fixture.vsd', import.meta.url))));
 assert.equal(vsdModel.kind, 'vsd');
 const shape = vsdModel.pages[0].shapes[0];
@@ -128,12 +151,23 @@ const nativeBytes = new Uint8Array(readFileSync(new URL('./fixture-native.vsd', 
 const nativeVsd = parseVsd(nativeBytes);
 const nativeShape = nativeVsd.pages[0].shapes.find(s => s.id === 1);
 assert.equal(nativeShape.text, 'Hello\\n\\n');
-assert.throws(() => { nativeShape.text = 'World\\n\\n'; }, error => error.reason === 'unsafe-block-relocation');
+nativeShape.text = nativeShape.text;
 assert.deepEqual(nativeVsd.serialize(), nativeBytes);
 assert.equal(nativeVsd.dirty, false);
 assert.equal(nativeVsd.revision, 0);
-nativeShape.text = nativeShape.text;
-assert.deepEqual(nativeVsd.serialize(), nativeBytes);
+nativeShape.text = 'World\\n\\n';
+const nativeSaved = nativeVsd.serialize();
+assert.equal(parseVsd(nativeSaved).pages[0].shapes.find(s => s.id === 1).text, 'World\\n\\n');
+assert.equal(nativeSaved.length, nativeBytes.length);
+const nativeBeforeStream = readCompoundFileStream(nativeBytes, ['VisioDocument']);
+const nativeAfterStream = readCompoundFileStream(nativeSaved, ['VisioDocument']);
+assert.equal(nativeAfterStream.length, nativeBeforeStream.length);
+assert.deepEqual(nativeAfterStream.subarray(0, 54), nativeBeforeStream.subarray(0, 54));
+assert.equal(nativeVsd.dirty, true);
+assert.equal(nativeVsd.revision, 1);
+assert.throws(() => { nativeShape.text = 'Too long\\n\\n'; });
+assert.deepEqual(nativeVsd.serialize(), nativeSaved);
+assert.equal(nativeVsd.revision, 1);
 const invalid = new Uint8Array([1, 2, 3]);
 assert.equal(editXlsNumericCell(invalid, { row: 0, col: 0, value: 1 }).bytes, invalid);
 const ppt = await buildPptFile({ widthEmu: 9144000, heightEmu: 5143500, slides: [{ shapes: [] }], pictures: [] });
@@ -147,7 +181,7 @@ run(process.execPath, [join(directory, 'verify.mjs')], directory);
 // Newly parsed metadata must remain additive for existing TypeScript callers.
 await writeFile(join(directory, 'verify-types.ts'), `
 import { readDocFib, readFcLcbAt, type DocFib, type DocCfbUnwrap } from '@christophervr/ole2';
-import { parseOle2, parseDoc, parseXls, parsePpt, parseVsd, type Ole2File, type PptDocument, type VsdDocument } from '@christophervr/ole2';
+import { parseOle2, parseDoc, parseXls, parsePpt, parseVsd, type Ole2File, type PptDocument, type VsdDocument, type DocParagraph } from '@christophervr/ole2';
 const input = new Uint8Array();
 const model = parseOle2(input);
 const compatible: Ole2File = model;
@@ -178,6 +212,15 @@ void compatible; void checked; void inferred; void parsePpt;
 void checkedVsd;
 const sizeHandle = parseDoc(input).paragraphs[0]?.runs?.[0];
 if (sizeHandle) sizeHandle.directFontSizePoints = 13.5;
+parseDoc(input).paragraphs[0]!.directAlignment = 'justify';
+const originalParagraph: DocParagraph = { index: 0, text: 'Caller-created paragraph' };
+void originalParagraph;
+// @ts-expect-error Alignment names describe logical direction, not physical left/right.
+parseDoc(input).paragraphs[0]!.directAlignment = 'left';
+const parsedNotes = parsePpt(input).slides[0]!.notes;
+if (parsedNotes) parsedNotes.texts[0]!.text = 'same-length notes';
+// @ts-expect-error Notes ownership cannot be replaced by a caller.
+parsePpt(input).slides[0]!.notes = undefined;
 const fib: DocFib = {
   flags1Offset: 10, flags1: 0, tableStreamName: '1Table', cbMacOffset: 64,
   cbMac: 4096, ccpTextOffset: 76, ccpText: 0, plcfbteChpx: { fc: 0, lcb: 0 },

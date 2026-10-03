@@ -46,6 +46,15 @@ export const apiPages = [
         ]
       },
       {
+        "title": "Direct paragraph alignment",
+        "body": "paragraph.directAlignment exposes logical start, center, end or justify, separately from inherited styles.",
+        "bullets": [
+          "An existing exclusive modern PAPX alignment operand can be replaced; matching legacy mirrors admit center/justify and update both slots.",
+          "Shared, opaque, conflicting or direction-dependent mirrored formatting refuses. Aggregate SPRM allocation is bounded to 262,144 records.",
+          "Native Word center/justify and save/reopen comparisons preserve other captured formatting; restoration is byte-exact."
+        ]
+      },
+      {
         "title": "Document model",
         "body": "Read paragraph.text and assign supported replacement text, then call serialize(). Successful edits mark dirty and increment revision.",
         "bullets": [
@@ -84,6 +93,7 @@ export const apiPages = [
         "bullets": [
           "Existing NUMBER/RK/MULRK numeric values require exact original encoding.",
           "Existing LABELSST/RK/NUMBER/MULRK cells can become plain Unicode strings, including continued SST entries.",
+          "Existing physical BLANK/MULBLANK cells can become number, plain string, boolean or error values; missing cells and merged followers still refuse.",
           "Packed siblings, selected XF and unrelated records are preserved; supported BOUNDSHEET/INDEX/DBCELL/ExtSST pointers are updated.",
           "Formula caches remain saved values; recalculationRequired signals that a consuming application must recalculate.",
           "Existing NUMBER/RK/MULRK cells may become boolean/error BOOLERR records; existing BOOLERR values can be replaced. Cell type distinguishes formula, number, string, boolean, error and blank."
@@ -126,11 +136,12 @@ export const apiPages = [
       },
       {
         "title": "Document model",
-        "body": "Assign slides[index].texts[index].text and serialize() after a supported edit.",
+        "body": "Assign slides[index].texts[index].text or an eligible slides[index].notes.texts body atom, then serialize() after a supported edit.",
         "bullets": [
           "Replacement text retains the UTF-16 length, original encoding and control/field marker positions.",
           "Active save history is resolved; stale saves, unknown records and surrounding bytes are retained.",
           "Mirrored text and physical atoms shared by multiple active slide positions are refused.",
+          "notesStatus distinguishes present, absent and unsupported notes; notesDiagnostic explains unsupported decoding. Notes fields, rich runs, creation and live-object/save-history overlaps refuse writes.",
           "Unsupported edits throw before changing dirty state, revision, model values or bytes."
         ]
       },
@@ -169,24 +180,25 @@ export const apiPages = [
       },
       {
         "title": "Preserving edits",
-        "body": "Supported shape.text and shape.transform setters serialize edited leaves and pointer ancestors while retaining original unknown record bytes and other CFB streams.",
+        "body": "Supported setters replace edited leaves at their original offsets and stored allocation sizes, retaining pointer ancestors, unknown records and other CFB streams.",
         "bullets": [
           "Text retains UTF-16 length and control positions; fields, shared or overlapping allocations refuse.",
+          "Bounded compression fits at most 8 MiB decoded leaf/allocation with up to 4096 zero suffix bytes; insufficient capacity or search budgets refuse atomically.",
           "Transform writes require an exclusive top-level literal transform with understood unit tags and no parent/master dependency.",
           "Literal path points are not automatically scaled or recalculated when transform dimensions change."
         ]
       },
       {
         "title": "Evidence and limitations",
-        "body": "Authored fixtures passed independent libvisio 0.1.7 callback comparisons and Windows IStorage preservation checks. Native Visio fidelity remains unverified.",
+        "body": "Native Visio 16 accepts the owned native baseline, production bounded World text edit and native save/reopen with only captured target text changed. The older handcrafted fixture is rejected by Visio despite libvisio acceptance.",
         "bullets": [
           "Earlier binary versions, general ShapeSheet evaluation, styles, rich text, embedded content and general drawing reconstruction remain unsupported.",
           "inspectLegacyVisio still validates the signature/version/TrailerStream pointer for compatible inspection layouts; inspection is separate from drawing decoding.",
-          "No native Visio or complete rendering/roundtrip parity claim is made."
+          "Native transform, rendering and complete roundtrip parity remain unverified; formula-bearing transforms refuse."
         ]
       }
     ],
-    "example": "import { parseVsd } from '@christophervr/ole2';\n\nconst drawing = parseVsd(vsdBytes);\nconst shape = drawing.pages[0].shapes[0];\nshape.text = 'World\\n'; // Same UTF-16 length as owned Hello + LF fixture.\nshape.transform = { ...shape.transform, pinX: 6, width: 5 };\nconst saved = drawing.serialize();"
+    "example": "import { parseVsd } from '@christophervr/ole2';\n\nconst drawing = parseVsd(vsdBytes);\nconst shape = drawing.pages[0].shapes.find(shape => shape.id === 1);\nshape.text = 'World\\n\\n'; // Native fixture stores Hello plus two LF characters.\nconst saved = drawing.serialize();"
   },
   {
     "slug": "publisher",
