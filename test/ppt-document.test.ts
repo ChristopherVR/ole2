@@ -65,7 +65,7 @@ describe('PptDocument active text model', () => {
 		expect(() => Object.defineProperty(slide, 'texts', { value: [] })).toThrow();
 		expect(slide.shapes.map(shape => shape.shapeId)).toEqual([14338, 14339, 14340]);
 		expect(slide.notes?.texts.some(text => text.role === 'body')).toBe(true);
-		expect(() => node.runs).toThrow(UnsupportedOle2EditError);
+		expect(node.runsStatus).toBe('decoded'); expect(node.runs[0]!.directFontSizePoints).toBe(28);
 		expect(doc.unsupported).toContain('unresolved-outline-shape-text');
 		expect(doc.capabilities.write).toContain('existing-text-fixed-utf16-length');
 		expect(doc.capabilities.limitations).toContain('notes-creation-and-inherited-fields');
@@ -129,3 +129,4 @@ describe('PptDocument active text model', () => {
 		expect(() => { narrow.slides[0]!.texts[0]!.text = '\u03b2ative title fixture'; }).toThrow(/encoding/);
 	});
 });
+
