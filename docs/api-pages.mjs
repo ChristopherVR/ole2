@@ -141,7 +141,7 @@ export const apiPages = [
           "Replacement text retains the UTF-16 length, original encoding and control/field marker positions.",
           "Active save history is resolved; stale saves, unknown records and surrounding bytes are retained.",
           "Mirrored text and physical atoms shared by multiple active slide positions are refused.",
-          "notesStatus distinguishes present, absent and unsupported notes; notesDiagnostic explains unsupported decoding. Notes fields, rich runs, creation and live-object/save-history overlaps refuse writes.",
+          "notesStatus distinguishes present, absent and unsupported notes; notesDiagnostic explains unsupported decoding. Notes fields, rich-run modifications, creation and live-object/save-history overlaps refuse writes; existing run records stay unchanged.",
           "Unsupported edits throw before changing dirty state, revision, model values or bytes."
         ]
       },
