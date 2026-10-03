@@ -5,7 +5,10 @@ param(
     [switch]$CaptureRichText,
     [int]$MaxRichTextCharacters = 4096,
     [string]$RichTextCells = '',
-    [switch]$CaptureFieldLocations
+    [switch]$CaptureFieldLocations,
+    [switch]$CaptureWordCharacterFonts,
+    [int]$MaxWordCharacters = 4096,
+    [switch]$CaptureCellTypes
 )
 # Explicit fixture paths only. Never enumerate recent documents or run macros.
 $ErrorActionPreference = 'Stop'
@@ -26,7 +29,17 @@ try {
             $paragraphs = @()
             foreach ($paragraph in $document.Paragraphs) {
                 $range = $paragraph.Range
-                $paragraphs += [ordered]@{ text = $range.Text; style = [string]$range.Style.NameLocal; bold = $range.Font.Bold; italic = $range.Font.Italic; size = $range.Font.Size; font = $range.Font.Name }
+                $paragraphEntry = [ordered]@{ text = $range.Text; style = [string]$range.Style.NameLocal; bold = $range.Font.Bold; italic = $range.Font.Italic; size = $range.Font.Size; font = $range.Font.Name }
+                if ($CaptureWordCharacterFonts) {
+                    if ($document.Content.End -gt $MaxWordCharacters) { throw "Word character capture exceeds MaxWordCharacters=$MaxWordCharacters" }
+                    $characters = @()
+                    foreach ($character in $range.Characters) {
+                        $font = $character.Font
+                        $characters += [ordered]@{ font = $font.Name; size = $font.Size; bold = $font.Bold; italic = $font.Italic; underline = $font.Underline; color = $font.Color }
+                    }
+                    $paragraphEntry['characterFonts'] = $characters
+                }
+                $paragraphs += $paragraphEntry
             }
             $headers = @()
             foreach ($section in $document.Sections) {
@@ -74,6 +87,13 @@ try {
                 foreach ($cell in $range.Cells) {
                     if ($null -ne $cell.Value2 -or $cell.HasFormula) {
                         $entry = [ordered]@{ row = $cell.Row - 1; col = $cell.Column - 1; value = $cell.Value2; formula = $cell.Formula; numberFormat = $cell.NumberFormat; bold = $cell.Font.Bold; italic = $cell.Font.Italic; font = $cell.Font.Name; size = $cell.Font.Size; merge = [string]$cell.MergeArea.Address() }
+                        if ($CaptureCellTypes) {
+                            # WorksheetFunction.IsError(range) can return a COM array for
+                            # merged cells. A scalar local reference avoids array coercion.
+                            $entry['isError'] = [bool]$sheet.Evaluate('ISERROR(' + $cell.Address() + ')')
+                            $entry['displayText'] = [string]$cell.Text
+                            $entry['valueType'] = if ($null -eq $cell.Value2) { 'null' } else { $cell.Value2.GetType().FullName }
+                        }
                         $richKey = $sheet.Name + '!' + ($cell.Row - 1) + ',' + ($cell.Column - 1)
                         if ($CaptureRichText -and ($richSelection.Count -eq 0 -or $richSelection -contains $richKey) -and $cell.Value2 -is [string]) {
                             $richSeen[$richKey] = $true
