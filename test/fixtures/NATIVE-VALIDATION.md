@@ -23,7 +23,7 @@ node scripts/compare-native-snapshots.mjs .native-validation/doc-before.json .na
 
 Repeat snapshots for `xls/workbook-features.xls` and `edited.xls`, or
 `sample-deck.ppt` and `edited.ppt`. Changes are a JSON array of
-`{"path":"/sheets/0/cells/INDEX/value","value":2.5}` objects using JSON Pointer.
+`{"path":"/sheets/0/cells/INDEX/value","value":2.75}` objects using JSON Pointer.
 Choose INDEX from the native baseline, and explicitly expect Excel's numeric
 `formula` field to change with the edited numeric cell. PPT edits change a shape's
 `text` field. Every captured field outside these exact changes must match.

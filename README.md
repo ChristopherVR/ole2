@@ -21,7 +21,7 @@ npm install @christophervr/ole2
 ## Features
 
 - MS-CFB/OLE2 compound-file stream reading and writing, including mini streams, FAT/DIFAT and directory metadata.
-- Word 97-2003 binary `.doc` main-body text reading and guarded existing-paragraph text editing.
+- Word 97-2003 binary `.doc` main-body text reading and guarded existing-paragraph edits, including fixed-length edits that retain original formatting runs and character-position tables.
 - Excel BIFF8 `.xls` workbook reading (`readXlsWorkbook`: every sheet, cell values, cached formula results and decoded formula text, styles, merges, column and row sizes, views, comments, hyperlinks, defined names), plus first-worksheet previews and bounded numeric/string cell edits.
 - PowerPoint 97-2003 `.ppt` active-slide text reading and fixed-length text edits that preserve surrounding bytes, plus binary export from a framework-neutral model (text, shapes, pictures, notes, embedded objects and optional RC4 encryption).
 - Visio and Publisher binary structure inspection, plus standard OLE document-property reading and bounded text-property edits. Drawing and publication page content is not yet decoded or editable.
@@ -58,6 +58,10 @@ if (edited === xlsBytes) console.log("This edit was not supported.");
 
 Excel previews do not evaluate formulas or resolve every continued shared string. Editing is constrained by record type, workbook structure and string-table layout. Unsupported edits return the exact input byte array; callers should check that result before reporting success.
 
+For an explicit numeric edit outcome, use `editXlsNumericCell(bytes, { worksheetIndex: 0, row: 1, col: 1, value: 2.75 })`. It supports existing NUMBER, RK and MULRK cells and returns `status: 'edited'` with `bytes` and `recalculationRequired: true`, or `status: 'unchanged'` with the original bytes and a reason. RK values must be exactly representable; unsupported precision is refused. This fixed-length path preserves all other records and compound-file bytes, including nested streams. Formula tokens and saved cached results are retained; the library does not recalculate them.
+
+`editXlsStringCell` provides an explicit outcome for the existing first-worksheet string editor. Continued SSTs, INDEX pointers, unknown cell-region records and complex resizing layouts are rejected. Supported string changes retain existing rich shared-string data and UTF-16 characters. This guarded path is not a general workbook writer.
+
 ```js
 import { readLegacyOfficeMetadata, writeLegacyOfficeMetadata } from "@christophervr/ole2";
 
@@ -68,6 +72,8 @@ const edited = writeLegacyOfficeMetadata(fileBytes, "title", "New title");
 if (edited === fileBytes) console.log("Unchanged or unsupported edit.");
 ```
 
+For Word, `tryWriteOleDocParagraphEdit(bytes, paragraphIndex, text)` returns either `status: 'edited'` with its strategy or `status: 'rejected'` with the original bytes and a reason. Equal-length plain-text edits retain original runs and character-position tables, including untouched headers and fields elsewhere. Growing edits require a simpler supported document and retain paragraph/first-run formatting; nested containers and dependent feature tables are rejected for this path. This remains a paragraph editor rather than a complete Word document model or creator.
+
 ## Legacy PowerPoint export
 
 `readPptSlideTexts(bytes)` follows the active user-edit/persist directory rather than scanning stale saves. It returns slide ids and outline/inline text atoms. It does not decode formatting, layout, masters, notes, pictures or animations into an editable presentation model. Encrypted input is rejected with `PptTextError.code === 'encrypted'`.
@@ -75,16 +81,16 @@ if (edited === fileBytes) console.log("Unchanged or unsupported edit.");
 ```js
 import { readPptSlideTexts, editPptSlideText } from '@christophervr/ole2';
 
-const atom = readPptSlideTexts(pptBytes).slides[0].texts[0];
+const atom = readPptSlideTexts(pptBytes).slides[0].texts[1];
 const result = editPptSlideText(pptBytes, {
-  slideIndex: 0, textIndex: 0,
+  slideIndex: 0, textIndex: 1,
   expectedText: atom.text, text: replacement,
 });
 if (result.status === 'edited') save(result.bytes);
 else if (result.status === 'unsupported') console.log(result.reason);
 ```
 
-The replacement must fit the existing encoding and keep its UTF-16 character count. Paragraph/control characters and field markers must remain at the same offsets. Existing formatting and hyperlink ranges retain their original character positions. Only the selected text payload changes; unknown records, nested streams, images and save history remain byte-for-byte intact. This constrained edit is separate from creating a new deck with `buildPptFile`, and is not a general presentation roundtrip.
+The replacement must fit the existing encoding and keep its UTF-16 character count. Paragraph/control characters and field markers must remain at the same offsets. Existing formatting and hyperlink ranges retain their original character positions. Only the selected text payload changes; unknown records, nested streams, images and save history remain byte-for-byte intact. Slides with an OOXML `metroBlob` mirror are refused because modern PowerPoint may prefer that content over the binary fallback. Outline and inline text are listed separately by storage order; shape-to-outline references are not resolved. This constrained edit is separate from creating a new deck with `buildPptFile`, and is not a general presentation roundtrip.
 
 ```js
 import { buildPptFile } from "@christophervr/ole2/legacy-ppt-writer";

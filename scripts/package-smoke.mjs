@@ -52,17 +52,22 @@ await writeFile(
 	join(directory, 'verify.mjs'),
 	`
 import assert from 'node:assert/strict';
-import { buildOle2, parseOle2, readCompoundFileStream, replaceCompoundFileStream, readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata } from '@christophervr/ole2';
+import { buildOle2, parseOle2, readCompoundFileStream, replaceCompoundFileStream, readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, editXlsNumericCell, editXlsStringCell, readPptSlideTexts, editPptSlideText, tryWriteOleDocParagraphEdit } from '@christophervr/ole2';
 import { buildPptFile } from '@christophervr/ole2/legacy-ppt-writer';
 import { readRecord } from '@christophervr/ole2/legacy-ppt-record-stream';
+import { readPptSlideTexts as subpathTextReader } from '@christophervr/ole2/legacy-ppt-text';
 
 const bytes = buildOle2(new Map([['Sample', new Uint8Array([1,2,3])]]));
 assert.deepEqual([...parseOle2(bytes).getStream('Sample')], [1,2,3]);
 const changed = replaceCompoundFileStream(new Uint8Array(bytes), ['Sample'], new Uint8Array([3,2,1]));
 assert.deepEqual([...readCompoundFileStream(changed, ['Sample'])], [3,2,1]);
-for (const api of [readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, readRecord]) assert.equal(typeof api, 'function');
+for (const api of [readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, readRecord, editXlsNumericCell, editXlsStringCell, editPptSlideText, tryWriteOleDocParagraphEdit]) assert.equal(typeof api, 'function');
+assert.equal(subpathTextReader, readPptSlideTexts);
+const invalid = new Uint8Array([1, 2, 3]);
+assert.equal(editXlsNumericCell(invalid, { row: 0, col: 0, value: 1 }).bytes, invalid);
 const ppt = await buildPptFile({ widthEmu: 9144000, heightEmu: 5143500, slides: [{ shapes: [] }], pictures: [] });
 assert.ok(parseOle2(ppt.buffer).getStream('PowerPoint Document')?.length > 0);
+assert.equal(readPptSlideTexts(ppt).slides.length, 1);
 console.log('Packed legacy OLE2 package works in an independent npm consumer.');
 `,
 );

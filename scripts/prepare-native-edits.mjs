@@ -10,18 +10,19 @@ mkdirSync(output, { recursive: true });
 const load = name => new Uint8Array(readFileSync(join(fixtureDirectory, name)));
 const module = name => import(pathToFileURL(join(moduleDirectory, name)).href);
 const { writeOleDocParagraphEdit } = await module('ole-document-doc-editor.js');
-const { writeOleXlsNumericCellEdit } = await module('legacy-excel-biff8.js');
+const { editXlsNumericCell } = await module('legacy-excel-biff8-edit.js');
 const doc = writeOleDocParagraphEdit(load('ole-word-97.doc'), 2, 'Native consumer verified paragraph.');
 writeFileSync(join(output, 'edited.doc'), doc);
 writeFileSync(join(output, 'doc-changes.json'), JSON.stringify([{ path: '/paragraphs/2/text', value: 'Native consumer verified paragraph.\r' }], null, 2));
-const xls = writeOleXlsNumericCellEdit(load('xls/workbook-features.xls'), { row: 1, col: 1, value: 2.5 });
-writeFileSync(join(output, 'edited.xls'), xls);
-console.log(JSON.stringify({ output, docBytes: doc.length, xlsBytes: xls.length, evidence: 'edit-generation-only' }));
+const xls = editXlsNumericCell(load('xls/workbook-features.xls'), { row: 1, col: 1, value: 2.75 });
+if (xls.status !== 'edited') throw new Error(`XLS edit rejected: ${JSON.stringify(xls)}`);
+writeFileSync(join(output, 'edited.xls'), xls.bytes);
+console.log(JSON.stringify({ output, docBytes: doc.length, xlsBytes: xls.bytes.length, evidence: 'edit-generation-only' }));
 // XLS expected paths must be chosen from the independent baseline snapshot,
 // since sparse-cell ordering is a consumer property, not a parser assumption.
 try {
   const { editPptSlideText } = await module('legacy-ppt-text.js');
-  const result = editPptSlideText(load('sample-deck.ppt'), { slideIndex: 0, textIndex: 0, expectedText: 'Project\rAtlas', text: 'Project\rOrion' });
+  const result = editPptSlideText(load('sample-deck.ppt'), { slideIndex: 0, textIndex: 1, expectedText: 'Product Overview', text: 'Product Snapshot' });
   if (result.status !== 'edited') throw new Error(`PPT edit rejected: ${JSON.stringify(result)}`);
   writeFileSync(join(output, 'edited.ppt'), result.bytes);
 } catch (error) {

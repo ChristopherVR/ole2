@@ -27,14 +27,14 @@ describe('active binary PPT text and fixed-slot editing', () => {
 	});
 	it('edits only the target bytes, preserving pictures and every surrounding byte', () => {
 		const input = load(), before = input.slice();
-		const result = editPptSlideText(input, { slideIndex: 0, textIndex: 0, expectedText: 'Project\rAtlas', text: 'Project\rOrion' });
+		const result = editPptSlideText(input, { slideIndex: 0, textIndex: 1, expectedText: 'Product Overview', text: 'Product Snapshot' });
 		expect(result.status).toBe('edited');
 		expect(input).toEqual(before);
 		expect(result.bytes.length).toBe(input.length);
-		expect(result.bytes.reduce((n, b, i) => n + Number(b !== input[i]), 0)).toBe(5);
-		expect(readPptSlideTexts(result.bytes).slides[0].texts[0].text).toBe('Project\rOrion');
+		expect(result.bytes.reduce((n, b, i) => n + Number(b !== input[i]), 0)).toBe(8);
+		expect(readPptSlideTexts(result.bytes).slides[0].texts[1].text).toBe('Product Snapshot');
 		const original = readPptSlideTexts(input), edited = readPptSlideTexts(result.bytes);
-		edited.slides[0].texts[0].text = original.slides[0].texts[0].text;
+		edited.slides[0].texts[1].text = original.slides[0].texts[1].text;
 		expect(edited).toEqual(original);
 	});
 	it('rejects stale locations, character growth, control changes and unencodable characters explicitly', () => {
@@ -88,5 +88,15 @@ describe('active binary PPT text and fixed-slot editing', () => {
 		expect(() => readPptSlideTexts(bad)).toThrow(PptTextError);
 		const result = editPptSlideText(bad, { slideIndex: 0, textIndex: 0, expectedText: '', text: '' });
 		expect(result.status).toBe('unsupported'); expect(result.bytes).toBe(bad);
+	});
+	it('refuses binary edits when modern OOXML content can override the slide', async () => {
+		const bytes = await buildPptFile({ widthEmu: 9144000, heightEmu: 5143500, pictures: [], slides: [{ shapes: [{
+			kind: 'shape', spt: 1, isConnector: false, anchor: { x: 0, y: 0, w: 3000000, h: 1000000 },
+			metroBlob: new Uint8Array([80, 75, 3, 4]),
+			text: { textType: 4, paragraphs: [{ indentLevel: 0, runs: [{ text: 'Hello' }] }] },
+		}] }] });
+		expect(readPptSlideTexts(bytes).slides[0].texts[0].text).toBe('Hello');
+		const result = editPptSlideText(bytes, { slideIndex: 0, textIndex: 0, expectedText: 'Hello', text: 'World' });
+		expect(result.status).toBe('unsupported'); expect(result.bytes).toBe(bytes);
 	});
 });
