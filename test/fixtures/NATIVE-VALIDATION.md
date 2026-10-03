@@ -51,6 +51,13 @@ COM calls. Excel's `Formula` getter can return null for long string cells; nativ
 baseline10,000/12,000-character strings already exhibit this behavior. Assert the
 full `Value2` text and explicitly record the consumer's null formula field.
 
+For main-story field scenarios, add `-CaptureFieldLocations` to both Word snapshot
+commands. Besides code/result/type, it records the field code's containing
+paragraph index and relative CP offset within that paragraph. Absolute offsets
+are not compared when preceding text grows or shrinks. This verifies that a field
+remains anchored in the same untouched paragraph rather than merely retaining its
+code/result somewhere in the document. The script never updates fields.
+
 Native snapshots capture semantic evidence: Word paragraphs/style/font flags,
 headers/footers, main-story field codes/results, footnotes and table/shape counts;
 Excel cell values/formulas/formats and sheet/name/shape metadata;
@@ -59,3 +66,28 @@ rendering fidelity, picture payload identity, all character runs, external objec
 or every unsupported record. Pair them with container unknown-stream preservation
 tests and format-specific parser tests. Parser self-roundtrips alone are not native
 fidelity. Generated snapshots/edits stay local and are excluded from npm packs.
+
+## Independent Windows compound-file oracle
+
+`scripts/native-cfb-snapshot.ps1` uses the Windows `ole32` structured-storage
+implementation to open explicit compound files read-only (`STGM_READ` with
+`STGM_SHARE_DENY_WRITE`). It never instantiates Office or activates embedded
+objects. It enumerates nested storages, hashes complete stream bytes, and records
+native class IDs, state bits, sizes, creation/modification times and element types.
+Root filesystem timestamps are excluded because they are outside serialized CFB
+directory fidelity. File allocation locations are deliberately absent from the
+native semantic snapshot.
+
+```powershell
+pwsh -STA -NoProfile -File scripts/native-cfb-snapshot.ps1 -InputPath supplied.cfb -OutputPath .native-validation/cfb-native.json
+```
+
+The oracle fails explicitly on enumeration/read errors, truncation, unexpected
+element types, depth over32, or configurable limits: 8,192 entries, 64MiB per
+stream and 128MiB total. It reads bounded chunks rather than allocating declared
+stream sizes. Compare against independently supplied generator manifests and
+expected changes with the existing snapshot comparator. This is native container
+evidence only; it says nothing about Office models or rendering. The v4 corpus
+check covers43 metadata entries and41 hashed streams, including a stream beyond
+the first32 directory slots and a mini-stream. Dedicated checks exercised entry,
+per-stream and total-byte rejection plus an invalid eight-byte input header.

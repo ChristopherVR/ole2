@@ -4,7 +4,8 @@ param(
     [int]$MaxCells = 10000,
     [switch]$CaptureRichText,
     [int]$MaxRichTextCharacters = 4096,
-    [string]$RichTextCells = ''
+    [string]$RichTextCells = '',
+    [switch]$CaptureFieldLocations
 )
 # Explicit fixture paths only. Never enumerate recent documents or run macros.
 $ErrorActionPreference = 'Stop'
@@ -32,7 +33,24 @@ try {
                 foreach ($header in $section.Headers) { if ($header.Exists) { $headers += [ordered]@{ section = $section.Index; kind = $header.Index; text = $header.Range.Text } } }
                 foreach ($footer in $section.Footers) { if ($footer.Exists) { $headers += [ordered]@{ section = $section.Index; kind = -$footer.Index; text = $footer.Range.Text } } }
             }
-            $fields = @($document.Fields | ForEach-Object { [ordered]@{ type = $_.Type; code = $_.Code.Text; result = $_.Result.Text } })
+            $fields = @()
+            foreach ($field in $document.Fields) {
+                $fieldEntry = [ordered]@{ type = $field.Type; code = $field.Code.Text; result = $field.Result.Text }
+                if ($CaptureFieldLocations) {
+                    $position = $field.Code.Start
+                    $paragraphIndex = 0
+                    foreach ($paragraph in $document.Paragraphs) {
+                        if ($position -ge $paragraph.Range.Start -and $position -lt $paragraph.Range.End) {
+                            $fieldEntry['paragraphIndex'] = $paragraphIndex
+                            $fieldEntry['relativeCodeStart'] = $position - $paragraph.Range.Start
+                            break
+                        }
+                        $paragraphIndex++
+                    }
+                    if (-not $fieldEntry.Contains('paragraphIndex')) { throw 'Main-story field location not found' }
+                }
+                $fields += $fieldEntry
+            }
             $footnotes = @($document.Footnotes | ForEach-Object { $_.Range.Text })
             $snapshot = [ordered]@{ consumer = 'Microsoft Word'; version = $app.Version; paragraphs = $paragraphs; tables = $document.Tables.Count; shapes = $document.Shapes.Count; inlineShapes = $document.InlineShapes.Count; sections = $document.Sections.Count; headers = $headers; fields = $fields; footnotes = $footnotes }
         }
