@@ -141,11 +141,11 @@ library memory limit or establish malformed-input safety.
 
 On 2026-10-03, fresh owned Word, Excel, PowerPoint and Visio instances (executable
 version 16.0.20430.20140) accepted 13 typed-model cases and their native saved
-copies. Inputs were repository-owned synthetic fixtures; macros were disabled,
+copies. Inputs were repository-owned native-generated neutral fixtures; macros were disabled,
 inputs opened read-only, and only generated copies were saved. These are captured
 semantic assertions, not rendered or full-format fidelity.
 
-The final combined build at `6a0f171` reproduced all 13 native-gated artifacts
+The final combined build at `6a0f1714a5735d376939936f32ef175233c307ab` reproduced all 13 native-gated artifacts
 byte-for-byte. The local evidence report `legacy-parity-evidence.json` has SHA256
 `edb67f8f787a380b67ce1ce772121df2f1b6e04252abe29cda0b7c2899d1b465` and records
 all source, output, native-save and snapshot hashes plus 69 compiled module hashes.
