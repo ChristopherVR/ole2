@@ -26,9 +26,12 @@ npm install @christophervr/ole2
 - PowerPoint 97-2003 `.ppt` active-slide text reading and fixed-length text edits that preserve surrounding bytes, plus binary export from a framework-neutral model (text, shapes, pictures, notes, embedded objects and optional RC4 encryption).
 - Visio and Publisher binary structure inspection, plus standard OLE document-property reading and bounded text-property edits. Drawing and publication page content is not yet decoded or editable.
 - Path-based compound stream edits preserve nested storage layout and all bytes outside the edited stream.
+- `resizeCompoundFileStream` grows or shrinks regular streams in supported v3 containers while retaining nested storage paths, unknown streams and original directory metadata. It returns an explicit result and refusal reason for unsupported layouts.
 - No browser or framework dependency; typed-array/ArrayBuffer inputs and ESM JavaScript with TypeScript declarations.
 
 ## Quick start
+
+For a container-level resize, call `resizeCompoundFileStream(bytes, ['ObjectPool', 'Workbook'], replacement)`. Success returns `{ ok: true, bytes }`; refusal returns `{ ok: false, bytes: originalInput, reason }`. The initial scope supports regular streams with 512-byte sectors and at most 109 header-listed FAT sectors. Mini-stream resizing, mini/regular transitions, v4 containers and DIFAT expansion are explicitly unsupported. Same-length mini-stream edits remain supported. Allocations are appended, so a smaller payload does not compact the physical file. Format-specific callers must update internal Office record offsets and lengths themselves.
 
 ```js
 import { buildOle2, parseOle2 } from "@christophervr/ole2";

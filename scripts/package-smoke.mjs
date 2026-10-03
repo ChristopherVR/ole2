@@ -52,7 +52,7 @@ await writeFile(
 	join(directory, 'verify.mjs'),
 	`
 import assert from 'node:assert/strict';
-import { buildOle2, parseOle2, readCompoundFileStream, replaceCompoundFileStream, readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, editXlsNumericCell, editXlsStringCell, readPptSlideTexts, editPptSlideText, tryWriteOleDocParagraphEdit } from '@christophervr/ole2';
+import { buildOle2, parseOle2, readCompoundFileStream, replaceCompoundFileStream, resizeCompoundFileStream, readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, editXlsNumericCell, editXlsStringCell, readPptSlideTexts, editPptSlideText, tryWriteOleDocParagraphEdit } from '@christophervr/ole2';
 import { buildPptFile } from '@christophervr/ole2/legacy-ppt-writer';
 import { readRecord } from '@christophervr/ole2/legacy-ppt-record-stream';
 import { readPptSlideTexts as subpathTextReader } from '@christophervr/ole2/legacy-ppt-text';
@@ -61,6 +61,14 @@ const bytes = buildOle2(new Map([['Sample', new Uint8Array([1,2,3])]]));
 assert.deepEqual([...parseOle2(bytes).getStream('Sample')], [1,2,3]);
 const changed = replaceCompoundFileStream(new Uint8Array(bytes), ['Sample'], new Uint8Array([3,2,1]));
 assert.deepEqual([...readCompoundFileStream(changed, ['Sample'])], [3,2,1]);
+const source = new Uint8Array(buildOle2(new Map([['Target', new Uint8Array(5000)], ['Unknown', new Uint8Array([7,8,9])]])));
+const resized = resizeCompoundFileStream(source, ['Target'], new Uint8Array(9000).fill(5));
+assert.equal(resized.ok, true);
+assert.equal(readCompoundFileStream(resized.bytes, ['Target']).length, 9000);
+assert.deepEqual([...readCompoundFileStream(resized.bytes, ['Unknown'])], [7,8,9]);
+const refused = resizeCompoundFileStream(source, ['Target'], new Uint8Array(3));
+assert.equal(refused.ok, false);
+assert.equal(refused.bytes, source);
 for (const api of [readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, writeLegacyOfficeMetadata, readRecord, editXlsNumericCell, editXlsStringCell, editPptSlideText, tryWriteOleDocParagraphEdit]) assert.equal(typeof api, 'function');
 assert.equal(subpathTextReader, readPptSlideTexts);
 const invalid = new Uint8Array([1, 2, 3]);
