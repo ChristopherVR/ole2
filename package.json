@@ -71,9 +71,9 @@
 		"release:publish": "node scripts/release.mjs"
 	},
 	"devDependencies": {
-		"shiki": "^4.4.3",
-		"typescript": "^5.9.3",
-		"vitest": "^3.2.0"
+		"shiki": "^4.5.0",
+		"typescript": "^7.0.2",
+		"vitest": "^5.0.3"
 	},
 	"engines": {
 		"node": ">=22"
