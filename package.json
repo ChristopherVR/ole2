@@ -64,15 +64,16 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"test": "vitest run",
 		"test:package": "node scripts/package-smoke.mjs",
-		"test:pages": "node scripts/check-page-highlight.mjs",
-		"build:pages": "bun scripts/build-pages.mjs",
 		"prepack": "bun run build",
 		"release:check": "node scripts/release.mjs --check",
-		"release:publish": "node scripts/release.mjs"
+		"release:publish": "node scripts/release.mjs",
+		"docs:dev": "vitepress dev docs",
+		"docs:build": "bun scripts/build-pages.mjs",
+		"docs:preview": "vitepress preview docs"
 	},
 	"devDependencies": {
-		"shiki": "^4.5.0",
 		"typescript": "^7.0.2",
+		"vitepress": "^1.6.4",
 		"vitest": "^5.0.3"
 	},
 	"engines": {

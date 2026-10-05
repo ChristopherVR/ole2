@@ -19,7 +19,7 @@ No-op bytes are exact; repeated model edits reproduce the natively tested Again
 artifact. Run `node scripts/prepare-native-vsd-text-safety-edits.mjs` after
 building to reproduce candidates and record module/artifact hashes. Generation
 does not itself validate Visio. See the full
-[native evidence and limits](../test/fixtures/NATIVE-VALIDATION.md).
+[native evidence and limits](https://github.com/ChristopherVR/ole2/blob/main/test/fixtures/NATIVE-VALIDATION.md).
 
 Native transform editing, rendering, nonempty masters/layers and general
 ShapeSheet evaluation remain unverified or unsupported.
