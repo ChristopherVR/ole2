@@ -40,6 +40,7 @@ export default defineConfig({
 					{ text: 'PPT export', link: '/ppt-export' },
 					{ text: 'Serialization contract', link: '/document-model' },
 					{ text: 'Format coverage', link: '/legacy-coverage' },
+					{ text: 'CFB compatibility', link: '/cfb-compatibility' },
 					{ text: 'CFB v4 preservation', link: '/cfb-v4-preservation' },
 				],
 			},

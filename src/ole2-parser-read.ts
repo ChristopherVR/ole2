@@ -5,34 +5,45 @@
  * Parses an OLE2 container to extract named streams (e.g.
  * "EncryptionInfo", "EncryptedPackage").
  *
+ * By default the reader accepts the irregularities real writers produce and
+ * that cannot change stream content: a byte-order mark other than 0xFFFE,
+ * trailing bytes or a short final sector, v3 stream-size high bits, a
+ * mini-FAT sector count that disagrees with its chain, a chain whose
+ * terminator is malformed after all advertised bytes were read, and stale
+ * directory slots no storage reaches. Each is reported in `warnings`.
+ * Stream bytes are never truncated, zero-filled or invented.
+ * `{strict: true}` rejects all of them.
+ *
  * Reference: [MS-CFB] Compound Binary File Format
  * @see https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-cfb
  *
  * @module ole2-parser-read
  */
 
-import type { Ole2File, Ole2DirectoryEntry } from './ole2-parser-types.js';
+import type { Ole2File, Ole2DirectoryEntry, Ole2ParseWarning, Ole2ReadOptions } from './ole2-parser-types.js';
 import {
 	OLE_MAGIC,
 	ENDOFCHAIN,
 	MAXREGSECT,
-	ENTRY_TYPE_EMPTY,
 	ENTRY_TYPE_STREAM,
 	ENTRY_TYPE_ROOT,
-	DIR_ENTRY_SIZE,
 	Ole2ParseError,
 } from './ole2-parser-types.js';
+import { findDirectoryEntry, findStreamByName, readDirectory } from './ole2-directory.js';
 
 /**
- * Parse an OLE2 compound binary file from an ArrayBuffer.
+ * Parse an OLE2 compound binary file.
  *
  * @param buffer - Raw bytes of the OLE2 file.
+ * @param options - Reader options; see `Ole2ReadOptions.strict`.
  * @returns Parsed OLE2 file with stream access.
  * @throws Ole2ParseError if the file is not a valid OLE2 container.
  */
-export function parseOle2(buffer: ArrayBuffer): Ole2File {
-	const data = new Uint8Array(buffer);
-	const view = new DataView(buffer);
+export function parseOle2(buffer: ArrayBuffer | Uint8Array, options: Ole2ReadOptions = {}): Ole2File {
+	const strict = options.strict === true;
+	const data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+	const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+	const warnings: Ole2ParseWarning[] = [];
 	if (data.length < 512) {
 		throw new Ole2ParseError('Truncated OLE2 compound file header');
 	}
@@ -45,12 +56,13 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 	}
 
 	// Read header fields
-	const _minorVersion = view.getUint16(0x18, true);
 	const majorVersion = view.getUint16(0x1a, true);
 	const byteOrder = view.getUint16(0x1c, true);
 
 	if (byteOrder !== 0xfffe) {
-		throw new Ole2ParseError('Invalid byte order mark');
+		// Some writers emit 0xFFFF; the format is little-endian regardless.
+		if (strict) throw new Ole2ParseError('Invalid byte order mark');
+		warnings.push({ code: 'byte-order', message: `Ignored byte order mark 0x${byteOrder.toString(16)}` });
 	}
 
 	const sectorSizePower = view.getUint16(0x1e, true);
@@ -64,10 +76,14 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 	}
 	const sectorSize = 1 << sectorSizePower;
 	const miniSectorSize = 1 << miniSectorSizePower;
-	if (data.length < sectorSize || data.length % sectorSize !== 0) {
-		throw new Ole2ParseError('Truncated OLE2 sector');
+	if (data.length < sectorSize) throw new Ole2ParseError('Truncated OLE2 sector');
+	if (data.length % sectorSize !== 0) {
+		// Trailing bytes, or a final sector some writers trim. Bytes beyond the
+		// physical end are never read as zeros; see `copySector`.
+		if (strict) throw new Ole2ParseError('Truncated OLE2 sector');
+		warnings.push({ code: 'unaligned-length', message: `File length ${data.length} is not a multiple of ${sectorSize}` });
 	}
-	const sectorCount = data.length / sectorSize - 1;
+	const sectorCount = Math.ceil(data.length / sectorSize) - 1;
 
 	const totalFATSectors = view.getUint32(0x2c, true);
 	const firstDirectorySector = view.getUint32(0x30, true);
@@ -80,12 +96,11 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 		throw new Ole2ParseError('Allocation table count exceeds file size');
 	}
 
-	// Helper: convert sector index to file offset
 	function sectorOffset(sector: number): number {
 		return (sector + 1) * sectorSize;
 	}
 
-	// Read sector data
+	/** A whole physical sector. Allocation metadata must never be partial. */
 	function readSector(sector: number): Uint8Array {
 		const offset = sectorOffset(sector);
 		if (offset + sectorSize > data.length) {
@@ -94,6 +109,17 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 			);
 		}
 		return data.subarray(offset, offset + sectorSize);
+	}
+
+	/** Copy up to `want` bytes of a sector; only the physically present ones. */
+	function copySector(sector: number, target: Uint8Array, at: number, want: number): void {
+		const offset = sectorOffset(sector);
+		if (sector >= sectorCount || offset + want > data.length) {
+			throw new Ole2ParseError(
+				`Sector ${sector} at offset ${offset} exceeds file size ${data.length}`,
+			);
+		}
+		target.set(data.subarray(offset, offset + want), at);
 	}
 
 	// Build the FAT (File Allocation Table)
@@ -141,32 +167,39 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 	}
 
 	/**
-	 * Read a chain of sectors following the FAT.
+	 * Follow an allocation chain. With `needed`, collection stops once that
+	 * many sectors are held; a malformed terminator after that point is
+	 * tolerated (lenient) because every advertised byte was already found.
 	 */
-	function readSectorChain(startSector: number): Uint8Array {
-		const sectors: Uint8Array[] = [];
-		let current = startSector;
+	function followChain(table: readonly number[], start: number, label: string, needed?: number): number[] {
+		const ids: number[] = [];
 		const visited = new Set<number>();
-
+		let current = start;
 		while (current <= MAXREGSECT) {
+			if (!strict && needed !== undefined && ids.length >= needed) return ids;
 			if (visited.has(current)) {
-				throw new Ole2ParseError(`Circular reference in FAT chain at sector ${current}`);
+				throw new Ole2ParseError(`Circular reference in ${label} chain at sector ${current}`);
 			}
 			visited.add(current);
-			sectors.push(readSector(current));
-			if (fatEntries[current] === undefined) throw new Ole2ParseError('Missing FAT chain entry');
-			current = fatEntries[current]!;
+			ids.push(current);
+			if (table[current] === undefined) throw new Ole2ParseError(`Missing ${label} chain entry`);
+			current = table[current]!;
 		}
-		if (current !== ENDOFCHAIN) throw new Ole2ParseError('Invalid FAT chain terminator');
+		if (current !== ENDOFCHAIN) {
+			if (strict || needed === undefined || ids.length < needed) {
+				throw new Ole2ParseError(`Invalid ${label} chain terminator`);
+			}
+			warnings.push({ code: 'chain-terminator', message: `Accepted ${label} chain ending in 0x${current.toString(16)}` });
+		}
+		return ids;
+	}
 
-		// Concatenate all sectors
-		const totalLength = sectors.length * sectorSize;
-		const result = new Uint8Array(totalLength);
-		let offset = 0;
-		for (const sector of sectors) {
-			result.set(sector, offset);
-			offset += sectorSize;
-		}
+	/** Allocation metadata (directory, mini FAT): whole sectors only. */
+	function readMetadataChain(startSector: number, label: string): Uint8Array {
+		if (startSector > MAXREGSECT) return new Uint8Array(0);
+		const ids = followChain(fatEntries, startSector, label === 'directory' ? 'FAT' : label);
+		const result = new Uint8Array(ids.length * sectorSize);
+		ids.forEach((id, i) => result.set(readSector(id), i * sectorSize));
 		return result;
 	}
 
@@ -176,85 +209,53 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 	function readStream(startSector: number, size: number): Uint8Array {
 		if (size === 0) return new Uint8Array(0);
 		if (size > sectorCount * sectorSize) throw new Ole2ParseError('Stream size exceeds file size');
-		const raw = readSectorChain(startSector);
-		if (raw.length < size) throw new Ole2ParseError('Truncated stream sector chain');
-		return raw.subarray(0, size);
+		const needed = Math.ceil(size / sectorSize);
+		const ids = followChain(fatEntries, startSector, 'FAT', needed);
+		if (ids.length < needed) throw new Ole2ParseError('Truncated stream sector chain');
+		const result = new Uint8Array(size);
+		for (let i = 0; i < needed; i++) {
+			copySector(ids[i]!, result, i * sectorSize, Math.min(sectorSize, size - i * sectorSize));
+		}
+		return result;
 	}
 
 	// Read directory entries
-	const dirRaw = readSectorChain(firstDirectorySector);
-	const numEntries = Math.floor(dirRaw.length / DIR_ENTRY_SIZE);
-	const entries: Ole2DirectoryEntry[] = [];
-
-	for (let i = 0; i < numEntries; i++) {
-		const entryOffset = i * DIR_ENTRY_SIZE;
-		const entryView = new DataView(dirRaw.buffer, dirRaw.byteOffset + entryOffset, DIR_ENTRY_SIZE);
-
-		const nameLen = entryView.getUint16(64, true);
-		const objectType = entryView.getUint8(66);
-
-		if (objectType === ENTRY_TYPE_EMPTY) {
-			continue;
+	if (firstDirectorySector > MAXREGSECT) throw new Ole2ParseError('Missing directory chain');
+	const entries: Ole2DirectoryEntry[] = readDirectory(
+		readMetadataChain(firstDirectorySector, 'directory'),
+		majorVersion,
+		strict,
+		warnings,
+	);
+	for (const entry of entries) {
+		if (majorVersion === 4 && (!Number.isSafeInteger(entry.size) || entry.size > sectorCount * sectorSize)) {
+			throw new Ole2ParseError('Stream size exceeds supported file bounds');
 		}
-		if (nameLen < 2 || nameLen > 64 || nameLen % 2 !== 0 || entryView.getUint16(nameLen - 2, true) !== 0) {
-			throw new Ole2ParseError('Invalid directory entry name');
-		}
-
-		// Name is a UTF-16LE string, nameLen includes the null terminator (in bytes)
-		const nameBytes = Math.max(0, nameLen - 2);
-		let name = '';
-		for (let j = 0; j < nameBytes; j += 2) {
-			name += String.fromCharCode(entryView.getUint16(j, true));
-		}
-
-		const leftSiblingId = entryView.getUint32(68, true);
-		const rightSiblingId = entryView.getUint32(72, true);
-		const childId = entryView.getUint32(76, true);
-		const clsid = new Uint8Array(
-			entryView.buffer.slice(entryView.byteOffset + 80, entryView.byteOffset + 96),
-		);
-		const startSector = entryView.getUint32(116, true);
-		const sizeLow = entryView.getUint32(120, true);
-
-		// For v4 files, size can be 64-bit
-		let size = sizeLow;
-		if (majorVersion === 4) {
-			const sizeHigh = entryView.getUint32(124, true);
-			size = sizeLow + sizeHigh * 0x100000000;
-			if (!Number.isSafeInteger(size) || size > sectorCount * sectorSize) {
-				throw new Ole2ParseError('Stream size exceeds supported file bounds');
-			}
-		}
-
-		entries.push({
-			name,
-			type: objectType,
-			startSector,
-			size,
-			childId: childId === 0xffffffff ? -1 : childId,
-			leftSiblingId: leftSiblingId === 0xffffffff ? -1 : leftSiblingId,
-			rightSiblingId: rightSiblingId === 0xffffffff ? -1 : rightSiblingId,
-			clsid,
-		});
 	}
 
 	// The root entry's stream is the mini-stream container
-	const rootEntry = entries.find((e) => e.type === ENTRY_TYPE_ROOT);
-	if (!rootEntry || entries.filter((e) => e.type === ENTRY_TYPE_ROOT).length !== 1) {
-		throw new Ole2ParseError('Invalid root directory entry');
-	}
+	const rootEntry = entries.find((e) => e.type === ENTRY_TYPE_ROOT)!;
 
 	let miniStreamData: Uint8Array | undefined;
-	if (rootEntry && rootEntry.startSector <= MAXREGSECT) {
+	if (rootEntry.startSector <= MAXREGSECT) {
 		miniStreamData = readStream(rootEntry.startSector, rootEntry.size);
 	}
 	// Only mini sectors inside the root allocation can be addressed. Table
 	// padding remains legal and never becomes an unbounded JS-number array.
 	const miniFatEntries: number[] = [];
-	if (firstMiniFATSector <= MAXREGSECT && totalMiniFATSectors > 0) {
-		const miniFatRaw = readSectorChain(firstMiniFATSector);
+	if (firstMiniFATSector > MAXREGSECT && totalMiniFATSectors > 0) {
+		if (strict) throw new Ole2ParseError('Unexpected mini FAT chain length');
+		warnings.push({ code: 'mini-fat-count', message: `Header lists ${totalMiniFATSectors} mini FAT sectors but no chain` });
+	}
+	if (firstMiniFATSector <= MAXREGSECT && (totalMiniFATSectors > 0 || !strict)) {
+		const miniFatRaw = readMetadataChain(firstMiniFATSector, 'mini FAT');
 		if (miniFatRaw.length !== totalMiniFATSectors * sectorSize) {
-			throw new Ole2ParseError('Unexpected mini FAT chain length');
+			// Writers occasionally miscount; the chain itself is authoritative.
+			if (strict) throw new Ole2ParseError('Unexpected mini FAT chain length');
+			warnings.push({
+				code: 'mini-fat-count',
+				message: `Header lists ${totalMiniFATSectors} mini FAT sectors; chain has ${miniFatRaw.length / sectorSize}`,
+			});
 		}
 		const miniFatView = new DataView(miniFatRaw.buffer, miniFatRaw.byteOffset, miniFatRaw.byteLength);
 		const miniCapacity = Math.floor((miniStreamData?.length ?? 0) / miniSectorSize);
@@ -271,52 +272,55 @@ export function parseOle2(buffer: ArrayBuffer): Ole2File {
 		if (!miniStreamData) {
 			throw new Ole2ParseError('Mini stream container not found');
 		}
-
-		const sectors: Uint8Array[] = [];
-		let current = startSector;
-		const visited = new Set<number>();
-
-		while (current <= MAXREGSECT) {
-			if (visited.has(current)) {
-				throw new Ole2ParseError(`Circular reference in mini FAT chain at sector ${current}`);
-			}
-			visited.add(current);
-			const offset = current * miniSectorSize;
-			if (offset + miniSectorSize > miniStreamData.length || miniFatEntries[current] === undefined) {
+		const needed = Math.ceil(size / miniSectorSize);
+		const capacity = miniStreamData.length / miniSectorSize;
+		let ids: number[];
+		try {
+			ids = followChain(miniFatEntries, startSector, 'mini FAT', needed);
+		} catch (error) {
+			if (error instanceof Ole2ParseError && /Missing mini FAT/.test(error.message)) {
 				throw new Ole2ParseError('Mini stream sector exceeds allocation bounds');
 			}
-			sectors.push(miniStreamData.subarray(offset, offset + miniSectorSize));
-			current = miniFatEntries[current]!;
+			throw error;
 		}
-		if (current !== ENDOFCHAIN) throw new Ole2ParseError('Invalid mini FAT chain terminator');
-
-		const totalLength = sectors.length * miniSectorSize;
-		if (totalLength < size) throw new Ole2ParseError('Truncated mini stream sector chain');
-		const result = new Uint8Array(totalLength);
-		let offset = 0;
-		for (const sector of sectors) {
-			result.set(sector, offset);
-			offset += miniSectorSize;
+		const result = new Uint8Array(size);
+		for (let i = 0; i < ids.length && i < needed; i++) {
+			const id = ids[i]!;
+			if (id >= capacity || (id + 1) * miniSectorSize > miniStreamData.length) {
+				throw new Ole2ParseError('Mini stream sector exceeds allocation bounds');
+			}
+			const want = Math.min(miniSectorSize, size - i * miniSectorSize);
+			result.set(miniStreamData.subarray(id * miniSectorSize, id * miniSectorSize + want), i * miniSectorSize);
 		}
-		return result.subarray(0, size);
+		if (ids.length < needed) throw new Ole2ParseError('Truncated mini stream sector chain');
+		return result;
 	}
 
-	/**
-	 * Get a named stream from the OLE2 file.
-	 */
-	function getStream(name: string): Uint8Array | undefined {
-		const entry = entries.find(
-			(e) => (e.type === ENTRY_TYPE_STREAM || e.type === ENTRY_TYPE_ROOT) && e.name === name,
-		);
-		if (!entry) {
-			return undefined;
-		}
-
+	function readEntry(entry: Ole2DirectoryEntry): Uint8Array {
 		if (entry.size < miniStreamCutoff && entry.type !== ENTRY_TYPE_ROOT) {
 			return readMiniStream(entry.startSector, entry.size);
 		}
 		return readStream(entry.startSector, entry.size);
 	}
+	const readable = (entry: Ole2DirectoryEntry) => entry.type === ENTRY_TYPE_STREAM || entry.type === ENTRY_TYPE_ROOT;
 
-	return { entries, getStream };
+	return {
+		entries,
+		warnings,
+		getStream(name: string): Uint8Array | undefined {
+			const entry = findStreamByName(entries, name, readable);
+			return entry ? readEntry(entry) : undefined;
+		},
+		getStreamByPath(path: string | readonly string[]): Uint8Array | undefined {
+			const entry = findDirectoryEntry(entries, path);
+			return entry && entry.type === ENTRY_TYPE_STREAM ? readEntry(entry) : undefined;
+		},
+		getStreamById(id: number): Uint8Array | undefined {
+			const entry = entries.find((candidate) => candidate.id === id);
+			return entry && readable(entry) ? readEntry(entry) : undefined;
+		},
+		findEntry(path: string | readonly string[]): Ole2DirectoryEntry | undefined {
+			return findDirectoryEntry(entries, path);
+		},
+	};
 }

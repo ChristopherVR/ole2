@@ -79,6 +79,12 @@ The replacement must fit the existing encoding and keep its UTF-16 character cou
 
 To create a new deck, see [PPT export](./ppt-export.md).
 
+For damaged decks that `readPptSlideTexts` refuses, `salvagePptText(bytes)` recovers read-only text and reports which recovery mode it used. See [CFB compatibility](./cfb-compatibility.md#powerpoint-text-recovery).
+
+## Compound files
+
+`parseCompoundFile(bytes, { strict? })` accepts the safe irregularities that real writers produce and reports them in `warnings`. It provides lookup by name, path (`getStreamByPath`) and directory ID (`getStreamById`). `buildCompoundFile`, `listCompoundFile` and `repairCompoundFile` write nested containers, support add, delete and move round trips, and rebuild damaged files canonically. See [CFB compatibility](./cfb-compatibility.md).
+
 ## Container resizing
 
 ```ts

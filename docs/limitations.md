@@ -14,7 +14,9 @@ For the per-format coverage table and the validation behind it, see [Format cove
 ## CFB containers
 
 - Supported resize layouts: v3 containers with 512-byte sectors and at most 109 header-listed FAT sectors, and v4 regular streams with 4096-byte sectors.
-- Not supported: creating new storage entries, external DIFAT expansion, variable-length v4 mini-stream edits and v4 mini/regular transitions, and high 64-bit stream sizes.
+- Reading accepts only irregularities that cannot change stream bytes; see [CFB compatibility](./cfb-compatibility.md). In-place edits refuse irregular containers until they are rebuilt with `repairCompoundFile`.
+- In-place edits cannot create entries; adding, deleting or moving entries requires a full rebuild with `buildCompoundFile`, which writes v3 only.
+- Not supported in place: creating new storage entries, external DIFAT expansion, variable-length v4 mini-stream edits and v4 mini/regular transitions, and high 64-bit stream sizes.
 - Allocations are appended, so shrinking a stream does not compact the file.
 - Only existing SummaryInformation text properties can be edited, and only when the value fits its slot. Creating or expanding properties and full property-set models are not supported.
 
@@ -46,6 +48,7 @@ See [CFB v4 preservation](./cfb-v4-preservation.md) for the tested and refused s
 - Direct character runs are read-only apart from existing inline text-box font sizes; there is no style insertion, run splitting or inheritance resolution.
 - Notes fields, rich-run changes and note creation are refused. Outline-to-shape text references can stay unresolved, and group/child coordinates remain local.
 - Encrypted files cannot produce a model.
+- `salvagePptText` is read-only and best-effort; its `record-scan` mode can include text from superseded saves.
 - Layout, masters, pictures and animations are not decoded into an editable presentation model.
 
 ### PPT export

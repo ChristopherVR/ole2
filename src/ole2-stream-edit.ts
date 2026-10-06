@@ -46,6 +46,73 @@ function chainToEnd(table: readonly number[], start: number, max: number): numbe
 	return out;
 }
 
+/** Leading `needed` ids of a chain; a long or badly terminated tail past
+ * the advertised size is never followed. */
+function chainPrefix(table: readonly number[], start: number, needed: number): number[] {
+	const out: number[] = [],
+		seen = new Set<number>();
+	let id = start;
+	while (out.length < needed) {
+		if (id > MAX || id >= table.length || seen.has(id)) throw new Error('Invalid CFB chain');
+		seen.add(id);
+		out.push(id);
+		id = table[id]!;
+	}
+	return out;
+}
+
+/**
+ * Read-only path: validate just the target's allocation. Unrelated damage
+ * elsewhere in the container cannot hide a healthy stream, and bytes past the
+ * physical end of a trimmed file are refused rather than zero-filled.
+ */
+function readTarget(
+	input: Uint8Array,
+	target: Entry,
+	root: Entry,
+	fat: readonly number[],
+	sector: (id: number) => Uint8Array,
+	sectorCount: number,
+	sectorSize: number,
+	miniSize: number,
+	read32: (offset: number) => number,
+): Uint8Array {
+	const size = target.size;
+	if (size === 0) return new Uint8Array(0);
+	const out = new Uint8Array(size);
+	const copyPhysical = (at: number, want: number, into: number) => {
+		if (at + want > input.length) throw new Error('Stream data exceeds file size');
+		out.set(input.subarray(at, at + want), into);
+	};
+	if (size >= read32(0x38)) {
+		if (size > sectorCount * sectorSize) throw new Error('Stream size exceeds file size');
+		chainPrefix(fat, target.start, Math.ceil(size / sectorSize)).forEach((id, i) => {
+			if (id >= sectorCount) throw new Error('Invalid sector');
+			copyPhysical((id + 1) * sectorSize, Math.min(sectorSize, size - i * sectorSize), i * sectorSize);
+		});
+		return out;
+	}
+	// The mini-FAT chain is authoritative; its header count is advisory here.
+	const miniFatSectors = chainToEnd(fat, read32(0x3c), sectorCount);
+	const miniCapacity = Math.floor(Math.min(root.size, sectorCount * sectorSize) / miniSize);
+	const miniFat: number[] = [];
+	for (const id of miniFatSectors) {
+		const bytes = sector(id),
+			dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		for (let j = 0; j < sectorSize / 4 && miniFat.length < miniCapacity; j++) miniFat.push(dv.getUint32(j * 4, true));
+	}
+	const rootSectors = chainPrefix(fat, root.start, Math.ceil(root.size / sectorSize));
+	chainPrefix(miniFat, target.start, Math.ceil(size / miniSize)).forEach((id, i) => {
+		const start = id * miniSize,
+			want = Math.min(miniSize, size - i * miniSize);
+		if (start + want > root.size) throw new Error('Mini stream out of bounds');
+		const rootSector = rootSectors[Math.floor(start / sectorSize)]!;
+		if (rootSector >= sectorCount) throw new Error('Invalid sector');
+		copyPhysical((rootSector + 1) * sectorSize + (start % sectorSize), want, i * miniSize);
+	});
+	return out;
+}
+
 /**
  * Replace a stream payload without reallocating sectors. The path is relative
  * to the root storage and includes every storage name followed by the stream.
@@ -70,7 +137,8 @@ function processCompoundFileStream(
 			input[5] !== 0xb1 ||
 			input[6] !== 0x1a ||
 			input[7] !== 0xe1 ||
-			view.getUint16(0x1c, true) !== 0xfffe
+			// Readers tolerate a non-canonical byte-order mark; edits do not.
+			(replacement && view.getUint16(0x1c, true) !== 0xfffe)
 		)
 			return reject();
 		const major = view.getUint16(0x1a, true),
@@ -80,11 +148,13 @@ function processCompoundFileStream(
 			return reject();
 		const sectorSize = 1 << shift,
 			miniSize = 1 << miniShift;
-		if (input.length % sectorSize !== 0) return reject();
-		const sectorCount = input.length / sectorSize - 1;
+		// Reads accept trailing bytes or a trimmed final sector, but never
+		// return bytes beyond the physical end; edits need a canonical file.
+		if (input.length < sectorSize || (replacement && input.length % sectorSize !== 0)) return reject();
+		const sectorCount = Math.ceil(input.length / sectorSize) - 1;
 		const offset = (id: number) => (id + 1) * sectorSize;
 		const sector = (id: number) => {
-			if (id > MAX || id >= sectorCount) throw new Error('Invalid sector');
+			if (id > MAX || id >= sectorCount || offset(id) + sectorSize > input.length) throw new Error('Invalid sector');
 			return input.subarray(offset(id), offset(id) + sectorSize);
 		};
 		const fatCount = read32(0x2c),
@@ -138,7 +208,9 @@ function processCompoundFileStream(
 				name += String.fromCharCode(dvDir.getUint16(p + i, true));
 			const sizeLow = dvDir.getUint32(p + 120, true),
 				sizeHigh = dvDir.getUint32(p + 124, true);
-			if (sizeHigh !== 0) return reject(); // 64-bit stream sizes are unsupported.
+			// 64-bit stream sizes are unsupported. v3 readers ignore the high
+			// bits, which old writers left uninitialized ([MS-CFB] 2.6.3).
+			if (sizeHigh !== 0 && (replacement || major === 4)) return reject();
 			entries.push({
 				id,
 				name,
@@ -178,6 +250,7 @@ function processCompoundFileStream(
 				return reject();
 		}
 		if (!target) return reject();
+		if (!replacement) return readTarget(input, target, root, fat, sector, sectorCount, sectorSize, miniSize, read32);
 		const names = entries.map((e) => e.name.toLowerCase());
 		if (replacement && (names.includes('encryptioninfo') || names.includes('encryptedpackage')))
 			return reject();
