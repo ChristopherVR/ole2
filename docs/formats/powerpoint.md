@@ -26,7 +26,7 @@ Assign slides[index].texts[index].text or an eligible slides[index].notes.texts 
 
 - Replacement text retains the UTF-16 length, original encoding and control/field marker positions.
 - Active save history is resolved; stale saves, unknown records and surrounding bytes are retained.
-- Mirrored text and physical atoms shared by multiple active slide positions are refused.
+- Mirrored text, physical atoms shared by multiple active slide positions, and atoms without a unique valid `TextHeaderAtom` owner are refused. Duplicate text atoms in one header group remain inspectable but cannot be edited.
 - `notesStatus` distinguishes present, absent and unsupported notes; `notesDiagnostic` explains unsupported decoding. Notes fields, rich-run modifications, creation and live-object/save-history overlaps refuse writes; existing run records stay unchanged.
 - Unsupported edits throw before changing dirty state, revision, model values or bytes.
 
@@ -40,7 +40,9 @@ The model exposes a bounded shape and text slice, with explicit resource budgets
 
 ## Compatibility APIs
 
-`readPptSlideTexts`, `editPptSlideText` and record utilities remain available. New existing-file edits should use the document model.
+`readPptSlideTexts`, `editPptSlideText` and record utilities remain available. `readPptSlideTexts(bytes, limits)` accepts positive integer `maxRecords`, `maxTextBytes` and `maxSlides` limits, defaulting to 100,000 records, 16 MiB of text payloads and 10,000 slides. Text bytes are counted across active references before each string is decoded; unknown child records consume the record budget, and persist entries are bounded by `maxRecords`. New existing-file edits should use the document model.
+
+The resource and ambiguous-owner regressions use existing generated/native fixtures and structurally modified copies. They add no new native PowerPoint save/reopen evidence. Arbitrary text growth still requires relocating records and updating dependent ranges, and remains unsupported.
 
 ## Example
 

@@ -1,13 +1,17 @@
-/** Fixed-length BIFF8 numeric edits. Every unrelated record and stream is preserved.
+/** Exact BIFF8 numeric edits. Every unrelated record and stream is preserved.
  * Formula tokens and cached results are preserved; this editor does not recalculate.
  * MS-XLS RkNumber, RK, MulRk and Number define the encodings used here.
  */
 import { decodeRk, isSupportedBiff8Workbook, readRecords } from './legacy-excel-biff8.js';
 import { unwrapXlsBytes } from './legacy-excel-cfb.js';
+import { promoteXlsNumericCell } from './legacy-excel-numeric-promotion.js';
+import { EditError } from './legacy-excel-record-edit-model.js';
+import { resizeCompoundFileStream } from './ole2-stream-resize.js';
+import { readCompoundFileStream } from './ole2-stream-edit.js';
 
 export type XlsNumericEditResult =
 	| { status: 'edited'; bytes: Uint8Array; recalculationRequired: true }
-	| { status: 'unchanged'; bytes: Uint8Array; reason: 'invalid-edit' | 'unsupported-workbook' | 'sheet-not-found' | 'cell-not-supported' | 'inexact-rk' | 'malformed-records' | 'container-not-writable' | 'ambiguous-cell' };
+	| { status: 'unchanged'; bytes: Uint8Array; reason: 'invalid-edit' | 'unsupported-workbook' | 'sheet-not-found' | 'cell-not-supported' | 'inexact-rk' | 'malformed-records' | 'container-not-writable' | 'ambiguous-cell' | 'unsupported-pointer-record' };
 
 /** Encode without rounding. RK can store signed 30-bit integers, scaled integers,
  * or the top 30 bits of an IEEE double (optionally divided by 100).
@@ -80,13 +84,15 @@ function worksheetRanges(bytes: Uint8Array): Array<{ start: number; end: number 
 
 /** Edit an existing NUMBER/RK/MULRK cell in a selected worksheet (zero-based
  * worksheet index in BOUNDSHEET tab order, excluding macro/chart sheets). Unsupported edits return an explicit reason and original
- * bytes. No resize, formula execution, or cached formula recalculation occurs.
+ * bytes. Inexact packed values promote to NUMBER only with checked relocation.
+ * No formula execution or cached formula recalculation occurs.
  */
 export function editXlsNumericCell(
 	input: Uint8Array,
 	edit: { row: number; col: number; value: number; worksheetIndex?: number },
 ): XlsNumericEditResult {
 	const unchanged = (reason: Extract<XlsNumericEditResult, { status: 'unchanged' }>['reason']): XlsNumericEditResult => ({ status: 'unchanged', bytes: input, reason });
+	edit = { row: edit.row, col: edit.col, value: edit.value, worksheetIndex: edit.worksheetIndex };
 	const sheet = edit.worksheetIndex ?? 0;
 	if (!Number.isInteger(edit.row) || edit.row < 0 || edit.row > 65535 || !Number.isInteger(edit.col) || edit.col < 0 || edit.col > 255 || !Number.isInteger(sheet) || sheet < 0 || !Number.isFinite(edit.value)) return unchanged('invalid-edit');
 	try {
@@ -136,7 +142,17 @@ export function editXlsNumericCell(
 		}
 		if (payload === undefined) return unchanged('cell-not-supported');
 		const rk = packed ? encodeRkExact(edit.value) : undefined;
-		if (packed && rk === undefined) return unchanged('inexact-rk');
+		if (packed && rk === undefined) {
+			// Bare legacy compatibility streams without a tab directory cannot
+			// establish relocation ownership and retain their explicit refusal.
+			if (!readRecords(bytes, 0, bytes.length).some(r => r.opcode === 0x0085)) return unchanged('inexact-rk');
+			const promoted = promoteXlsNumericCell(bytes, edit);
+			if (!rewrap) return { status: 'edited', bytes: promoted, recalculationRequired: true };
+			const names = ['Workbook', 'Book'].filter(name => readCompoundFileStream(input, [name]) !== undefined);
+			if (names.length !== 1) return unchanged('unsupported-workbook');
+			const resized = resizeCompoundFileStream(input, [names[0]!], promoted);
+			return resized.ok ? { status: 'edited', bytes: resized.bytes, recalculationRequired: true } : unchanged('container-not-writable');
+		}
 		const out = bytes.slice();
 		const outView = new DataView(out.buffer, out.byteOffset, out.byteLength);
 		if (packed) outView.setUint32(payload, rk!, true);
@@ -144,7 +160,7 @@ export function editXlsNumericCell(
 		const result = rewrap ? rewrap(out) : out;
 		if (result === input) return unchanged('container-not-writable');
 		return { status: 'edited', bytes: result, recalculationRequired: true };
-	} catch {
-		return unchanged('malformed-records');
+	} catch (error) {
+		return unchanged(error instanceof EditError ? error.reason : 'malformed-records');
 	}
 }

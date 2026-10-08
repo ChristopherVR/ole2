@@ -62,7 +62,6 @@ describe('XlsDocument transactional adapter', () => {
   expect(formula).toBeDefined();
   expect(() => { formula.value = 3; }).toThrow(UnsupportedOle2EditError);
   const numeric = sheet.cell(1, 1);
-  expect(() => { numeric.value = Math.PI; }).toThrow(UnsupportedOle2EditError);
   expect(() => { numeric.value = Infinity; }).toThrow(UnsupportedOle2EditError);
   expect(() => { numeric.value = null; }).toThrow(UnsupportedOle2EditError);
   const text = sheet.cells.find(c => typeof c.value === 'string' && !c.formula)!;

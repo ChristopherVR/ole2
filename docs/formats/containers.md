@@ -20,6 +20,12 @@ Automatic parsing falls back to a CFB view with explicit diagnostics for ambiguo
 - Compatibility entries/`getStream` remain; returned inspection data is detached from owned bytes.
 - `parseCompoundFile` names the original raw reader.
 
+Directory entries expose exact `createdFileTime` and `modifiedFileTime` bigint
+ticks alongside the millisecond `Date` views. `listCompoundFile` and
+`repairCompoundFile` retain those ticks, including sub-millisecond precision.
+Changing a listed `Date` writes the new date; to unset a timestamp, clear both
+its `Date` and raw FILETIME fields. Invalid or out-of-range timestamps are refused.
+
 ## Example
 
 ```ts
