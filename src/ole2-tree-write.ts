@@ -27,6 +27,7 @@ import {
 	type Ole2ReadOptions,
 } from './ole2-parser-types.js';
 import { parseOle2 } from './ole2-parser-read.js';
+import { writeFileTime } from './ole2-filetime.js';
 import { compareDirEntryNames, encodeName, writeFatChain, writeFatRun, writeInt32Sectors } from './ole2-parser-write-helpers.js';
 import { sizeFatSectors, writeDifatSectors, writeHeader, writeStreamSectors } from './ole2-parser-write-serialize.js';
 
@@ -40,19 +41,23 @@ export interface CompoundFileNode {
 	stateBits?: number;
 	created?: Date;
 	modified?: Date;
+	/** Exact FILETIME ticks. Clear both this field and created to unset a listed timestamp. */
+	createdFileTime?: bigint;
+	/** Exact FILETIME ticks. Clear both this field and modified to unset a listed timestamp. */
+	modifiedFileTime?: bigint;
 }
 
 export interface CompoundFileBuildOptions {
 	rootClsid?: Uint8Array;
 	rootStateBits?: number;
 	rootModified?: Date;
+	rootModifiedFileTime?: bigint;
 	/** Streams smaller than this go to the mini stream. Default 4096; 0 disables it. */
 	miniStreamCutoff?: number;
 }
 
 const SECTOR = 512;
 const MINI_SECTOR = 64;
-const FILETIME_UNIX_EPOCH = 116444736000000000n;
 
 interface Node {
 	name: string;
@@ -62,6 +67,8 @@ interface Node {
 	stateBits: number;
 	created?: Date;
 	modified?: Date;
+	createdFileTime?: bigint;
+	modifiedFileTime?: bigint;
 	children: Node[];
 	id: number;
 	left: number;
@@ -78,12 +85,6 @@ function validateName(name: string): void {
 	if (!name.length || name.length > 31 || /[\x00\\/:!]/.test(name)) {
 		throw new Error(`CFB name "${name}" must be 1-31 UTF-16 code units without NUL, \\, /, :, or !`);
 	}
-}
-
-function writeFileTime(view: DataView, offset: number, date: Date | undefined): void {
-	if (!date || Number.isNaN(date.getTime())) return;
-	const ticks = BigInt(Math.round(date.getTime())) * 10000n + FILETIME_UNIX_EPOCH;
-	if (ticks > 0n) view.setBigUint64(offset, ticks, true);
 }
 
 /** Balanced red-black sibling tree over name-sorted nodes (same shape as `buildDirectoryTree`). */
@@ -107,7 +108,7 @@ function buildTree(input: readonly CompoundFileNode[], options: CompoundFileBuil
 	if (options.rootClsid && options.rootClsid.length !== 16) throw new Error('Root CLSID must contain 16 bytes');
 	const root: Node = {
 		name: 'Root Entry', type: ENTRY_TYPE_ROOT, clsid: options.rootClsid, stateBits: options.rootStateBits ?? 0,
-		modified: options.rootModified, children: [], id: 0, left: NOSTREAM, right: NOSTREAM, child: NOSTREAM, color: 1, start: ENDOFCHAIN,
+		modified: options.rootModified, modifiedFileTime: options.rootModifiedFileTime, children: [], id: 0, left: NOSTREAM, right: NOSTREAM, child: NOSTREAM, color: 1, start: ENDOFCHAIN,
 	};
 	const byKey = new Map<string, Node>([['', root]]);
 	const keyOf = (path: readonly string[]) => path.map((name) => name.toUpperCase()).join('/');
@@ -143,6 +144,8 @@ function buildTree(input: readonly CompoundFileNode[], options: CompoundFileBuil
 		node.stateBits = item.stateBits ?? 0;
 		node.created = item.created;
 		node.modified = item.modified;
+		node.createdFileTime = item.createdFileTime;
+		node.modifiedFileTime = item.modifiedFileTime;
 	}
 	// Directory IDs in depth-first order; each storage's children sorted per [MS-CFB] 2.6.4.
 	const ordered: Node[] = [];
@@ -237,8 +240,8 @@ export function buildCompoundFile(nodes: readonly CompoundFileNode[], options: C
 		if (node.clsid) out.set(node.clsid, at + 80);
 		view.setUint32(at + 96, node.stateBits >>> 0, true);
 		// [MS-CFB] 2.6.3: the root entry's creation time must be zero.
-		if (node.id !== 0) writeFileTime(view, at + 100, node.created);
-		writeFileTime(view, at + 108, node.modified);
+		if (node.id !== 0) writeFileTime(view, at + 100, node.created, node.createdFileTime);
+		writeFileTime(view, at + 108, node.modified, node.modifiedFileTime);
 		let start = 0, size = 0;
 		if (node.type === ENTRY_TYPE_ROOT) { start = rootSectors[0] ?? ENDOFCHAIN; size = container.length; }
 		else if (node.type === ENTRY_TYPE_STREAM) {
@@ -274,10 +277,11 @@ function collect(file: ParsedFile, dropUnreadable: boolean) {
 		}
 		nodes.push({
 			path: [...entry.path], data, stateBits: entry.stateBits, created: entry.created, modified: entry.modified,
+			createdFileTime: entry.createdFileTime, modifiedFileTime: entry.modifiedFileTime,
 			clsid: entry.clsid.some((byte) => byte !== 0) ? entry.clsid : undefined,
 		});
 	}
-	const options: CompoundFileBuildOptions = { rootClsid: root.clsid, rootStateBits: root.stateBits, rootModified: root.modified };
+	const options: CompoundFileBuildOptions = { rootClsid: root.clsid, rootStateBits: root.stateBits, rootModified: root.modified, rootModifiedFileTime: root.modifiedFileTime };
 	return { nodes, options, dropped };
 }
 

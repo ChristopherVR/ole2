@@ -88,6 +88,10 @@ export interface Ole2DirectoryEntry {
 	created?: Date;
 	/** Modification time, when the entry records one. */
 	modified?: Date;
+	/** Exact unsigned FILETIME ticks; preserves precision absent from Date. */
+	createdFileTime?: bigint;
+	/** Exact unsigned FILETIME ticks, including zero (unset). */
+	modifiedFileTime?: bigint;
 }
 
 /** A non-fatal irregularity the reader accepted. No warning ever stands for fabricated stream data. */

@@ -8,6 +8,7 @@
  */
 
 import type { Ole2DirectoryEntry, Ole2ParseWarning } from './ole2-parser-types.js';
+import { fileTimeDate } from './ole2-filetime.js';
 import {
 	DIR_ENTRY_SIZE,
 	ENTRY_TYPE_EMPTY,
@@ -17,22 +18,11 @@ import {
 	Ole2ParseError,
 } from './ole2-parser-types.js';
 
-/** FILETIME ticks between 1601-01-01 and 1970-01-01. */
-const FILETIME_UNIX_EPOCH = 116444736000000000n;
-
 interface Slot {
 	id: number;
 	type: number;
 	nameValid: boolean;
 	entry: Ole2DirectoryEntry;
-}
-
-function readFileTime(view: DataView, offset: number): Date | undefined {
-	const ticks = view.getBigUint64(offset, true);
-	if (ticks === 0n) return undefined;
-	const ms = Number((ticks - FILETIME_UNIX_EPOCH) / 10000n);
-	const date = new Date(ms);
-	return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
 function decodeSlot(dir: Uint8Array, id: number, majorVersion: number, warnings: Ole2ParseWarning[]): Slot {
@@ -68,8 +58,10 @@ function decodeSlot(dir: Uint8Array, id: number, majorVersion: number, warnings:
 			childId: link(76),
 			clsid: new Uint8Array(view.buffer.slice(view.byteOffset + 80, view.byteOffset + 96)),
 			stateBits: view.getUint32(96, true),
-			created: readFileTime(view, 100),
-			modified: readFileTime(view, 108),
+			created: fileTimeDate(view.getBigUint64(100, true)),
+			modified: fileTimeDate(view.getBigUint64(108, true)),
+			createdFileTime: view.getBigUint64(100, true),
+			modifiedFileTime: view.getBigUint64(108, true),
 			startSector: view.getUint32(116, true),
 			size,
 			parentId: -1,

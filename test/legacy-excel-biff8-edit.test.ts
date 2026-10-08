@@ -39,10 +39,12 @@ describe('exact BIFF8 numeric editing on Excel-generated fixtures', () => {
   expect(cell(result.bytes, 2, target.row, target.col)?.value).toBe(43);
   expect(readXlsWorkbook(result.bytes).sheets[0]).toEqual(before.sheets[0]);
  });
- it('does not round an unrepresentable RK value or replace a formula', () => {
+ it('promotes an unrepresentable RK value without rounding and does not replace a formula', () => {
   const input = fixture();
-  expect(editXlsNumericCell(input, { row: 1, col: 1, value: Math.PI })).toMatchObject({ status: 'unchanged', reason: 'inexact-rk', bytes: input });
-  expect(writeOleXlsNumericCellEdit(input, { row: 1, col: 1, value: Math.PI })).toBe(input);
+  const promoted = editXlsNumericCell(input, { row: 1, col: 1, value: Math.PI });
+  expect(promoted.status).toBe('edited');
+  expect(cell(promoted.bytes, 0, 1, 1)?.value).toBe(Math.PI);
+  expect(cell(writeOleXlsNumericCellEdit(input, { row: 1, col: 1, value: Math.PI }), 0, 1, 1)?.value).toBe(Math.PI);
   expect(editXlsNumericCell(input, { worksheetIndex: 1, row: 0, col: 0, value: 9 })).toMatchObject({ status: 'unchanged', reason: 'cell-not-supported' });
  });
  it('rejects invalid coordinates, protected files and truncated records', () => {

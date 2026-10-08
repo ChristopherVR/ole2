@@ -67,6 +67,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { parseDoc, parseXls, parsePpt, parseVsd, parseCompoundFile, Ole2DocumentError } from '@christophervr/ole2';
+import { buildCompoundFile, listCompoundFile, repairCompoundFile } from '@christophervr/ole2';
+const ticks = 116444736000012345n;
+const timed = buildCompoundFile([{path: ['Timed'], data: new Uint8Array([7]), createdFileTime: ticks}], {rootModifiedFileTime: ticks});
+const listed = listCompoundFile(timed);
+assert.equal(parseCompoundFile(buildCompoundFile(listed.nodes, listed.options)).findEntry('Timed').createdFileTime, ticks);
+assert.equal(parseCompoundFile(repairCompoundFile(timed).bytes).findEntry([]).modifiedFileTime, ticks);
 const sizedDoc = parseDoc(readFileSync(new URL('./fixture-size.doc', import.meta.url)));
 const sizedRun = sizedDoc.paragraphs.flatMap(p => p.runs ?? []).find(r => r.directFontSizePoints === 18);
 assert(sizedRun);
@@ -103,6 +109,18 @@ for (const api of [readOleXlsGrid, inspectLegacyVisio, inspectLegacyPublisher, w
 assert.equal(subpathTextReader, readPptSlideTexts);
 assert.equal(subpathStringEditor, editXlsPreservedStringCell);
 const workbook = new Uint8Array(readFileSync(new URL('./fixture.xls', import.meta.url)));
+const createdWorkbook = parseXls(workbook);
+const retainedNumeric = createdWorkbook.sheets[0].cell(2, 5);
+const createdNumeric = createdWorkbook.sheets[0].createNumericCell(2, 6, Math.PI, retainedNumeric.xf);
+assert.equal(createdNumeric.value, Math.PI);
+assert.equal(createdNumeric.xf, retainedNumeric.xf);
+createdNumeric.value = 37.125;
+assert.equal(parseXls(createdWorkbook.serialize()).sheets[0].cell(2, 6).value, 37.125);
+assert.equal(retainedNumeric.value, parseXls(workbook).sheets[0].cell(2, 5).value);
+const createdSnapshot = createdWorkbook.serialize(), createdRevision = createdWorkbook.revision;
+assert.throws(() => createdWorkbook.sheets[0].createNumericCell(2, 6, 1, retainedNumeric.xf));
+assert.deepEqual(createdWorkbook.serialize(), createdSnapshot);
+assert.equal(createdWorkbook.revision, createdRevision);
 const stringValue = 'Unicode ' + String.fromCodePoint(0x03a9, 0x65e5, 0x1f600);
 const stringEdit = editXlsPreservedStringCell(workbook, {row: 1, col: 0, value: stringValue});
 assert.equal(stringEdit.status, 'edited');
@@ -208,6 +226,10 @@ assert.equal(nativeVsd.revision, 1);
 const literalBytes = new Uint8Array(readFileSync(new URL('./fixture-literal.vsd', import.meta.url)));
 const hierarchyBytes = new Uint8Array(readFileSync(new URL('./fixture-hierarchy.vsd', import.meta.url)));
 const hierarchy = parseVsd(hierarchyBytes);
+const sections = hierarchy.pages[1].shapes[0].geometrySections;
+assert.equal(sections[0].noShow, true);
+assert.equal(sections[0].rows.length, 5);
+assert.ok(Object.isFrozen(sections[0].rows[0]));
 assert.deepEqual(hierarchy.pages.map(page => page.id), [0, 4]);
 assert.deepEqual(hierarchy.pages[0].topLevelShapeIds, [2, 1, 5, 6]);
 assert.deepEqual(hierarchy.pages[1].topLevelShapeIds, [1, 2, 3]);
@@ -243,6 +265,8 @@ run(process.execPath, [join(directory, 'verify.mjs')], directory);
 await writeFile(join(directory, 'verify-types.ts'), `
 import { readDocFib, readFcLcbAt, type DocFib, type DocCfbUnwrap } from '@christophervr/ole2';
 import { parseOle2, parseDoc, parseXls, parsePpt, parseVsd, type Ole2File, type PptDocument, type VsdDocument, type DocParagraph } from '@christophervr/ole2';
+import { type VsdGeometrySection, type PptTextReadLimits, readPptSlideTexts, buildCompoundFile } from '@christophervr/ole2';
+import { type VsdEllipseGeometry, createXlsNumericCell } from '@christophervr/ole2';
 const input = new Uint8Array();
 const model = parseOle2(input);
 const compatible: Ole2File = model;
@@ -253,6 +277,24 @@ if (model.kind === 'vsd') model.pages[0]!.shapes[0]!.text = 'fixed';
 const checkedVsd: VsdDocument = parseOle2<'vsd'>(input, {expect: 'vsd'});
 const order: readonly number[] | undefined = checkedVsd.pages[0]!.topLevelShapeIds;
 const children: readonly number[] | undefined = checkedVsd.pages[0]!.shapes[0]!.childShapeIds;
+const section: VsdGeometrySection = checkedVsd.pages[0]!.shapes[0]!.geometrySections[0]!;
+// @ts-expect-error Stored geometry rows are inspection-only.
+section.rows.push({kind: 'moveTo', id: 0, x: 0, y: 0});
+// @ts-expect-error Stored geometry visibility is inspection-only.
+section.noShow = false;
+const limits: PptTextReadLimits = {maxRecords: 100, maxTextBytes: 1024, maxSlides: 2};
+readPptSlideTexts(input, limits);
+buildCompoundFile([{path: ['Exact'], createdFileTime: 1n}], {rootModifiedFileTime: 1n});
+const createdCell = parseXls(input).sheets[0]!.createNumericCell(2, 6, Math.PI, 15);
+createdCell.value = 37.125;
+// @ts-expect-error Numeric creation requires a finite number value, not a string.
+parseXls(input).sheets[0]!.createNumericCell(2, 6, 'value', 15);
+// @ts-expect-error Explicit creation requires a caller-selected existing cell style.
+parseXls(input).sheets[0]!.createNumericCell(2, 6, Math.PI);
+createXlsNumericCell(input, {row: 2, col: 6, value: Math.PI, xf: 15});
+const ellipse: VsdEllipseGeometry = {kind: 'ellipse', id: 1, centerX: 0, centerY: 0, leftX: -1, leftY: 0, topX: 0, topY: 1};
+// @ts-expect-error Stored ellipse operands remain readonly.
+ellipse.centerX = 1;
 // @ts-expect-error Validated order metadata is readonly.
 checkedVsd.pages[0]!.topLevelShapeIds = [1];
 void order; void children;

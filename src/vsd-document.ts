@@ -1,6 +1,6 @@
 /** Stored-value binary Visio v11 model; no master/style/formula evaluation. */
 import { Ole2DocumentBase, UnsupportedOle2EditError, type Ole2DocumentCapabilities } from './ole2-document-base.js';
-import { readVsdDrawing, validateVsdInput, VsdError, type VsdDrawingData, type VsdTransform, type VsdGeometry } from './vsd-reader.js';
+import { readVsdDrawing, validateVsdInput, VsdError, type VsdDrawingData, type VsdTransform, type VsdGeometry, type VsdGeometrySection } from './vsd-reader.js';
 import { replaceVsdShapeText, replaceVsdShapeTransform } from './vsd-writer.js';
 
 export class VsdShape {
@@ -20,6 +20,8 @@ export class VsdShape {
  /** Validated drawing order of this owner's explicit children; undefined when unresolved. */
  get childShapeIds():readonly number[]|undefined {const ids=this.#read().childShapeIds;return ids&&Object.freeze([...ids]);}
  get shapeOrderIssue():string|undefined{return this.#read().shapeOrderIssue;}
+ /** Explicit stored sections, including visibility flags; no rendered path evaluation. */
+ get geometrySections(): readonly VsdGeometrySection[] { return Object.freeze(this.#read().geometrySections.map(section=>Object.freeze({...section,rows:Object.freeze(section.rows.map(row=>Object.freeze({...row})))}))); }
  get geometry(): readonly VsdGeometry[] { return Object.freeze(this.#read().geometry.map(row=>Object.freeze({...row}))); }
 }
 export class VsdPage {
@@ -34,7 +36,7 @@ export class VsdPage {
  /** Stored internal inches multiply by scale for rendered page coordinates. */
  get scale(): number | undefined {return this.#read().scale;}
 }
-const CAPABILITIES: Ole2DocumentCapabilities = Object.freeze({read:Object.freeze(['v11-pages','validated-page-and-group-order','explicit-shape-transform','utf16-shape-text','move-to-line-to']),write:Object.freeze(['equal-length-shape-text','literal-shape-transform']),limitations:Object.freeze(['Version 11 only; stored values without master/style/formula evaluation.','Drawing order may be unresolved; flat shape arrays retain physical order and group coordinates stay local.','Edits require an exact stored-block fit at the original offset; relocation is refused. Bounded compression preserves exact decoded length and supports at most 8 MiB decoded leaf/allocation, with bounded token-fit search and no added decoded bytes.','No added/deleted shapes, text length changes or text field edits.','Shared/overlapping VSD blocks cannot be edited; native evidence covers only declared fixture edits, not full Visio fidelity.'])});
+const CAPABILITIES: Ole2DocumentCapabilities = Object.freeze({read:Object.freeze(['v11-pages','validated-page-and-group-order','explicit-shape-transform','utf16-shape-text','move-to-line-to','stored-geometry-sections-and-arc-to','stored-ellipse-rows']),write:Object.freeze(['equal-length-shape-text','literal-shape-transform']),limitations:Object.freeze(['Version 11 only; stored values without master/style/formula evaluation.','Drawing order may be unresolved; flat shape arrays retain physical order and group coordinates stay local.','Edits require an exact stored-block fit at the original offset; relocation is refused. Bounded compression preserves exact decoded length and supports at most 8 MiB decoded leaf/allocation, with bounded token-fit search and no added decoded bytes.','No added/deleted shapes, text length changes or text field edits.','Shared/overlapping VSD blocks cannot be edited; native evidence covers only declared fixture edits, not full Visio fidelity.'])});
 export class VsdDocument extends Ole2DocumentBase {
  #drawing: VsdDrawingData; #pages: readonly VsdPage[];
  get kind(): 'vsd' {return 'vsd';}

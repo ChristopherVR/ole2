@@ -47,3 +47,17 @@ const shape = drawing.pages[0].shapes.find(shape => shape.id === 1);
 shape.text = 'World\n\n'; // Native fixture stores Hello plus two LF characters.
 const saved = drawing.serialize();
 ```
+
+`shape.geometrySections` exposes Geometry-header record IDs, `noFill`, `noLine`,
+`noShow` flags and explicit MoveTo/LineTo/ArcTo/Ellipse rows. ArcTo includes its stored
+`bow` operand. Ellipse retains center, left and top coordinate pairs rather than
+computing radii or rendering a path. Section and row snapshots are detached and frozen. The existing
+flat `shape.geometry` array keeps its MoveTo/LineTo compatibility behavior.
+Unknown section flags and undecoded complex rows set the section's
+`unsupported` flag. Rows retain physical record order; Geometry-list order,
+master/style inheritance and formulas are not evaluated.
+These reads use [libvisio's binary VSD parser](https://github.com/LibreOffice/libvisio/blob/master/src/lib/VSDParser.cpp)
+as a layout reference. The owned native hierarchy fixture verifies stored row values
+and a hidden-section flag; generated ArcTo and Ellipse cases verify stored
+operands only. This adds no geometry writes or new native save/reopen evidence.
+Guide ownership continues to refuse rather than misattribute guide records.

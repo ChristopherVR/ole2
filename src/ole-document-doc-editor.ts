@@ -158,6 +158,43 @@ function encodePieceTextUtf16(text: string): Uint8Array {
 	return bytes;
 }
 
+/** Physical text patches must never overwrite the FIB or a referenced FKP.
+ * A malformed piece can decode as plain text even when it points into an
+ * opaque portion of one of those structures. Merge page ranges once so the
+ * overlap check does not multiply piece and formatting-page counts. */
+function protectedWordRanges(word: Uint8Array, table: Uint8Array, fib: ParsedDocFib): Array<readonly [number, number]> {
+	const view = new DataView(word.buffer, word.byteOffset, word.byteLength);
+	const extension = fib.fibRgFcLcbOffset + fib.fibRgFcLcbCount * 8;
+	const fibEnd = extension + 2 + view.getUint16(extension, true) * 2;
+	const pages = new Set<number>();
+	for (const at of [fib.plcfbteChpx, fib.plcfbtePapx]) {
+		if (at.lcb > 65_536 * 8 + 4)
+			throw new DocResourceLimitError('DOC formatting page count exceeds the processing limit');
+		for (const pn of parseBteTable(table, at).pns) {
+			const start = (pn & 0x3fffff) * 512;
+			if (start > word.length - 512) throw new Error('Formatting page outside WordDocument');
+			pages.add(start);
+		}
+	}
+	const ranges: Array<readonly [number, number]> = [[0, fibEnd]];
+	for (const start of [...pages].sort((a, b) => a - b)) {
+		const last = ranges.at(-1)!;
+		if (start <= last[1]) ranges[ranges.length - 1] = [last[0], Math.max(last[1], start + 512)];
+		else ranges.push([start, start + 512]);
+	}
+	return ranges;
+}
+
+function overlapsWordStructure(ranges: ReadonlyArray<readonly [number, number]>, start: number, end: number): boolean {
+	let low = 0, high = ranges.length;
+	while (low < high) {
+		const middle = low + Math.floor((high - low) / 2);
+		if (ranges[middle]![1] <= start) low = middle + 1;
+		else high = middle;
+	}
+	return low < ranges.length && ranges[low]![0] < end;
+}
+
 /** Read main-body paragraphs, excluding paragraph marks. Returns undefined for
  * malformed/unsupported input or exceeded processing budgets. Defaults permit
  * 16,777,216 UTF-16 main-story positions and 65,536 pieces; callers may override. */
@@ -196,11 +233,23 @@ function shiftSectionTableCps(
 	sed: FcLcb,
 	editEndCp: number,
 	delta: number,
+	storyLength: number,
 ): void {
 	const view = new DataView(tableBytes.buffer, tableBytes.byteOffset, tableBytes.byteLength);
 	if (sed.lcb < 4 || (sed.lcb - 4) % 16 !== 0 || sed.fc > tableBytes.length - sed.lcb)
 		throw new Error('Invalid section table');
 	const n = (sed.lcb - 4) / 16;
+	let previous = -1;
+	// Validate the whole array before mutating it. A malformed CP must never be
+	// wrapped by setInt32 or silently retained inside a replacement paragraph.
+	for (let i = 0; i <= n; i++) {
+		const cp = view.getInt32(sed.fc + i * 4, true);
+		const shifted = cp >= editEndCp ? cp + delta : cp;
+		if (cp < 0 || cp > storyLength + 1 || cp < previous ||
+			shifted < 0 || shifted > 0x7fffffff || shifted > storyLength + delta + 1)
+			throw new Error('Invalid section table character positions');
+		previous = cp;
+	}
 	for (let i = 0; i <= n; i++) {
 		const off = sed.fc + i * 4;
 		const cp = view.getInt32(off, true);
@@ -270,11 +319,18 @@ export function tryWriteOleDocParagraphEdit(
 		const sanitizedText = text.replaceAll(/[\r\n]+/gu, ' ');
 		if (fib.ccpText - (paragraphEndCp - paragraphStartCp) + sanitizedText.length + 1 > budget.maxCharacters)
 			return rejected('resource-limit');
+		const mainFields = readFcLcbAt(cfb.wordDocBytes, fib, 16);
+		// Plain paragraphs can still lie inside a field spanning paragraph marks.
+		// Apply the range/nesting guard before the CP-stable fast path too, including
+		// fields intentionally omitted from the main-story field PLC.
+		shiftDocMainFieldCps(cfb.tableBytes, mainFields, bodyText,
+			paragraphStartCp, paragraphEndCp, 0, budget.maxFieldRecords);
 		// A CP-stable replacement can retain every piece, formatting run and CP-keyed
 		// feature table, including features outside this paragraph. Only plain target
 		// paragraphs qualify, and compressed pieces must retain their encoding.
 		if (sanitizedText.length + 1 === paragraphEndCp - paragraphStartCp && bodyText[paragraphEndCp - 1] === '\r') {
 			const replacement = `${sanitizedText}\r`;
+			const protectedRanges = protectedWordRanges(cfb.wordDocBytes, cfb.tableBytes, fib);
 			const patched = cfb.wordDocBytes.slice();
 			let canPatch = true;
 			for (const piece of pieces) {
@@ -285,6 +341,7 @@ export function tryWriteOleDocParagraphEdit(
 				const unit = piece.compressed ? 1 : 2;
 				const fc = piece.fc + (start - piece.cpStart) * unit;
 				const fcEnd = fc + part.length * unit;
+				if (overlapsWordStructure(protectedRanges, fc, fcEnd)) return rejected('invalid-document');
 				// Fast-save pieces can alias physical text; do not alter another logical range.
 				if (pieces.some((other) => other !== piece && other.fc < fcEnd &&
 					other.fc + (other.cpEnd - other.cpStart) * (other.compressed ? 1 : 2) > fc)) {
@@ -299,15 +356,15 @@ export function tryWriteOleDocParagraphEdit(
 		if (!cfb.canRewrite) return rejected('unsupported-container');
 		if (hasUnsupportedFeatures(cfb.wordDocBytes, fib)) return rejected('unsupported-features');
 		const delta = sanitizedText.length + 1 - (paragraphEndCp - paragraphStartCp);
-		const mainFields = readFcLcbAt(cfb.wordDocBytes, fib, 16);
 		// Never patch a region aliased by another FIB table. Pair87 is the
 		// packed timestamp rather than a table pointer ([MS-DOC] 2.5.6).
-		if (mainFields.lcb > 0) {
+		for (const [targetIndex, target] of [[16, mainFields], [6, fib.sed]] as const) {
+			if (target.lcb === 0) continue;
 			for (let index = 0; index < fib.fibRgFcLcbCount; index++) {
-				if (index === 16 || index === 87) continue;
+				if (index === targetIndex || index === 87) continue;
 				const other = readFcLcbAt(cfb.wordDocBytes, fib, index);
-				if (other.lcb > 0 && other.fc < mainFields.fc + mainFields.lcb &&
-					other.fc + other.lcb > mainFields.fc) return rejected('invalid-document');
+				if (other.lcb > 0 && other.fc < target.fc + target.lcb &&
+					other.fc + other.lcb > target.fc) return rejected('invalid-document');
 			}
 		}
 		const shiftedFields = shiftDocMainFieldCps(cfb.tableBytes, mainFields, bodyText,
@@ -387,7 +444,7 @@ export function tryWriteOleDocParagraphEdit(
 		const newChpxBteFcLcb: FcLcb = { fc: tableOff, lcb: chpxBteBytes.length };
 		newTableBytes.set(chpxBteBytes, tableOff);
 
-		shiftSectionTableCps(newTableBytes, fib.sed, paragraphEndCp, delta);
+		shiftSectionTableCps(newTableBytes, fib.sed, paragraphEndCp, delta, fib.ccpText);
 
 		patchDocFib(newWordDoc, fib, {
 			ccpText: newCcpText,

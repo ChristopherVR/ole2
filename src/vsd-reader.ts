@@ -11,8 +11,13 @@ export class VsdError extends Error {
 }
 export interface VsdTransform { pinX: number; pinY: number; width: number; height: number; localPinX: number; localPinY: number; angle: number; flipX: boolean; flipY: boolean }
 export interface VsdGeometry { readonly kind: 'moveTo' | 'lineTo'; readonly id: number; readonly x: number; readonly y: number }
+export interface VsdEllipseGeometry { readonly kind: 'ellipse'; readonly id: number; readonly centerX: number; readonly centerY: number; readonly leftX: number; readonly leftY: number; readonly topX: number; readonly topY: number }
+export type VsdGeometryRow = VsdGeometry | VsdEllipseGeometry | { readonly kind: 'arcTo'; readonly id: number; readonly x: number; readonly y: number; readonly bow: number };
+/** Geometry-header record IDs and rows in physical order; no list-order, master, formula or path evaluation. */
+export interface VsdGeometrySection { readonly id: number; readonly noFill: boolean; readonly noLine: boolean; readonly noShow: boolean; readonly unsupported: boolean; readonly rows: readonly VsdGeometryRow[] }
+interface GeometrySectionData { id: number; noFill: boolean; noLine: boolean; noShow: boolean; unsupported: boolean; rows: VsdGeometryRow[] }
 export interface VsdRecordLocation { block: VsdBlock; offset: number; length: number }
-export interface VsdShapeData { childShapeIds?: readonly number[]; shapeOrderIssue?: string; id: number; kind: 'shape' | 'group' | 'foreign'; coordinateSpace: 'shape-local'; parentId?: number; masterPageId?: number; masterShapeId?: number; unsupportedGeometry: boolean; unsafeTransform: boolean; text?: string; transform?: VsdTransform; geometry: VsdGeometry[]; textRecord?: VsdRecordLocation; transformRecord?: VsdRecordLocation; unsafeText: boolean }
+export interface VsdShapeData { childShapeIds?: readonly number[]; shapeOrderIssue?: string; id: number; kind: 'shape' | 'group' | 'foreign'; coordinateSpace: 'shape-local'; parentId?: number; masterPageId?: number; masterShapeId?: number; unsupportedGeometry: boolean; unsafeTransform: boolean; text?: string; transform?: VsdTransform; geometry: VsdGeometry[]; geometrySections: VsdGeometrySection[]; textRecord?: VsdRecordLocation; transformRecord?: VsdRecordLocation; unsafeText: boolean }
 export interface VsdPageData { topLevelShapeIds?: readonly number[]; shapeOrderIssue?: string; id: number; background: boolean; width?: number; height?: number; scale?: number; shapes: VsdShapeData[] }
 export interface VsdBlock { offset: number; length: number; format: number; type: number; bytes: Uint8Array; parent?: VsdBlock; pointerOffset: number }
 export interface VsdDrawingData { stream: Uint8Array; streamPath: string[]; version: 11; pages: VsdPageData[]; blocks: VsdBlock[]; writable: boolean }
@@ -63,7 +68,7 @@ export function readVsdDrawing(input: Uint8Array): VsdDrawingData {
   const block: VsdBlock = { offset, length, format, type, bytes, parent, pointerOffset }; data.blocks.push(block);
   if (type === 0x15) { page = { id, background: !(format & 1), shapes: [] }; data.pages.push(page); shape = undefined; }
   if (page && [0x47, 0x48, 0x4e].includes(type)) {
-   shape = { id, kind: type === 0x47 ? 'group' : type === 0x4e ? 'foreign' : 'shape', coordinateSpace:'shape-local', unsupportedGeometry: false, unsafeTransform: false, geometry: [], unsafeText: false }; page.shapes.push(shape);
+   shape = { id, kind: type === 0x47 ? 'group' : type === 0x4e ? 'foreign' : 'shape', coordinateSpace:'shape-local', unsupportedGeometry: false, unsafeTransform: false, geometry: [], geometrySections: [], unsafeText: false }; page.shapes.push(shape);
    if (bytes.length - shift >= 54) { const sv=view(bytes);shape.parentId=sv.getUint32(shift+10,true);shape.masterPageId=sv.getUint32(shift+18,true);shape.masterShapeId=sv.getUint32(shift+26,true); }
   }
   const mode = format >>> 4;
@@ -85,6 +90,7 @@ export function readVsdDrawing(input: Uint8Array): VsdDrawingData {
    // Compressed chunk streams begin directly with their first chunk header;
    // only compressed blob/pointer-table streams have the four-byte prefix.
    let cursor = 0;
+   let section: { owner: VsdShapeData; level: number; data: GeometrySectionData } | undefined;
    while (cursor < bytes.length) {
     while (cursor < bytes.length && bytes[cursor] === 0) cursor++;
     if (cursor === bytes.length) break;
@@ -128,7 +134,7 @@ export function readVsdDrawing(input: Uint8Array): VsdDrawingData {
      else order.ids.set(chunkId,cv.getUint32(start,true));
     }
     if (page && [0x47,0x48,0x4e].includes(chunk)) {
-     current = { id: chunkId, kind: chunk === 0x47 ? 'group' : chunk === 0x4e ? 'foreign' : 'shape', coordinateSpace:'shape-local', unsupportedGeometry: false, unsafeTransform: false, geometry: [], unsafeText: false };
+     current = { id: chunkId, kind: chunk === 0x47 ? 'group' : chunk === 0x4e ? 'foreign' : 'shape', coordinateSpace:'shape-local', unsupportedGeometry: false, unsafeTransform: false, geometry: [], geometrySections: [], unsafeText: false };
      if(length<54) throw new VsdError('shape-header');
      current.parentId=cv.getUint32(start+10,true);current.masterPageId=cv.getUint32(start+18,true);current.masterShapeId=cv.getUint32(start+26,true);
      page.shapes.push(current); stack.push({ level, shape: current });
@@ -140,7 +146,14 @@ export function readVsdDrawing(input: Uint8Array): VsdDrawingData {
      if(page.width<0 || page.height<0 || pageScale<=0 || drawingScale<=0) throw new VsdError('invalid-page-scale');
      page.scale=pageScale/drawingScale;if(!Number.isFinite(page.scale))throw new VsdError('invalid-page-scale');
     }
-    if(current && chunk===0x89 && length>0 && bytes[start]!==0)current.unsupportedGeometry=true;
+    if(section && (section.owner!==current || level<section.level || chunk===0x6c))section=undefined;
+    if(current && chunk===0x89){
+     if(length<1)throw new VsdError('geometry-section-record');
+     const flags=bytes[start]!,data:GeometrySectionData={id:chunkId,noFill:!!(flags&1),noLine:!!(flags&2),noShow:!!(flags&4),unsupported:!!(flags&~7),rows:[]};
+     current.geometrySections.push(data);section={owner:current,level,data};
+     // Preserve the conservative legacy completeness signal for flagged sections.
+     if(flags!==0)current.unsupportedGeometry=true;
+    }
     if (current && chunk === 0x0e) {
      if (length < 8 || (length - 8) % 2 || current.textRecord) throw new VsdError('text-record');
      current.text = new TextDecoder('utf-16le', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(start + 8, start + length));
@@ -152,9 +165,23 @@ export function readVsdDrawing(input: Uint8Array): VsdDrawingData {
      current.transform = {pinX: values[0]!,pinY:values[1]!,width:values[2]!,height:values[3]!,localPinX:values[4]!,localPinY:values[5]!,angle:values[6]!,flipX:!!bytes[start+63],flipY:!!bytes[start+64]};
      current.transformRecord = { block, offset: start, length };
     }
-    if (current && [0x8a,0x8b].includes(chunk)) { if (length < 18) throw new VsdError('geometry-record'); current.geometry.push({kind:chunk===0x8a?'moveTo':'lineTo',id:chunkId,x:numeric(bytes,start+1),y:numeric(bytes,start+10)}); }
+    if (current && [0x8a,0x8b,0x8c].includes(chunk)) {
+     if(length<(chunk===0x8c?27:18))throw new VsdError('geometry-record');
+     const x=numeric(bytes,start+1),y=numeric(bytes,start+10);
+     if(chunk===0x8c){const bow=numeric(bytes,start+19);if(section)section.data.rows.push({kind:'arcTo',id:chunkId,x,y,bow});}
+     else{const row:VsdGeometry={kind:chunk===0x8a?'moveTo':'lineTo',id:chunkId,x,y};current.geometry.push(row);if(section)section.data.rows.push(row);}
+    }
+    if(current && chunk===0x8f){
+     // libvisio VSDParser::readEllipse: six tagged stored doubles, not radii.
+     if(length<54)throw new VsdError('geometry-record');
+     const centerX=numeric(bytes,start+1),centerY=numeric(bytes,start+10),leftX=numeric(bytes,start+19),leftY=numeric(bytes,start+28),topX=numeric(bytes,start+37),topY=numeric(bytes,start+46);
+     if(section)section.data.rows.push({kind:'ellipse',id:chunkId,centerX,centerY,leftX,leftY,topX,topY});
+    }
     if (current && [0xa1,0x6f].includes(chunk)) current.unsafeText = true;
-    if (current && [0x8c,0x8d,0x8f,0x90,0xa5,0xa6,0xc1,0xc3].includes(chunk)) current.unsupportedGeometry=true;
+    if (current && [0x8c,0x8d,0x8f,0x90,0xa5,0xa6,0xc1,0xc3].includes(chunk)) {
+     current.unsupportedGeometry=true;
+     if(section && chunk!==0x8c && chunk!==0x8f)section.data.unsupported=true;
+    }
     if (current && (chunk===0x9d || chunk===0xa4)) current.unsafeTransform=true;
     cursor = start + length + trailer;
    }

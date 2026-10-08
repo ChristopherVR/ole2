@@ -26,7 +26,10 @@
 Read paragraph.text and assign supported replacement text, then call serialize(). Successful edits mark dirty and increment revision.
 
 - Equal-length plain targets retain runs and character-position tables when the encoding fits.
+- Physical text ranges overlapping the FIB or referenced CHPX/PAPX pages refuse before patching. Formatting-page descriptor scans are bounded to 65,536 per table; malformed-fixture regressions verify atomic refusal.
+- Field-range guards also apply to equal-length edits: a plain paragraph inside a multi-paragraph field result is refused, including fields omitted from the field PLC.
 - Guarded growth/shrink outside balanced main-story fields shifts field positions while preserving codes, results and flags.
+- Growth validates section CP bounds/order and refuses section or field tables aliased by another FIB table before changing any bytes. Derived malformed-fixture tests cover these guards; they do not add native Word validation evidence.
 - Rejected setters throw `UnsupportedOle2EditError` before changing bytes or model state.
 
 ## Explicit limits
@@ -35,6 +38,8 @@ The paragraph collection has fixed structure. Rich runs expose a bounded direct-
 
 - No paragraph insertion/removal or embedded paragraph breaks.
 - Edits inside field code/result ranges and unsupported CP-dependent features are refused.
+- Bookmark-dependent growth remains unsupported; equal-length edits outside guarded field ranges preserve existing bookmark positions.
+- [Bookmark prerequisites and fixture audit](../doc-bookmark-prerequisites.md) explain the retained refusal and the primary layout constraints.
 - Processing budgets and supported container layout limits apply; no fresh-document writer is implied.
 
 ## Compatibility APIs

@@ -27,6 +27,10 @@ export interface PptTextDocument {
 	unsupported: readonly string[];
 }
 
+export interface PptTextReadLimits { maxRecords?: number; maxTextBytes?: number; maxSlides?: number }
+const DEFAULT_LIMITS = { maxRecords: 100000, maxTextBytes: 16 * 1024 * 1024, maxSlides: 10000 };
+interface TextBudget { records: number; textBytes: number; limits: typeof DEFAULT_LIMITS }
+
 const viewOf = (bytes: Uint8Array) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 function recordAt(view: DataView, offset: number, type?: number): PptRecord {
 	const rec = readRecordOrThrow(view, offset);
@@ -34,21 +38,24 @@ function recordAt(view: DataView, offset: number, type?: number): PptRecord {
 		throw new PptTextError('corrupt', `Invalid record at ${offset}`);
 	return rec;
 }
-function children(view: DataView, parent: PptRecord): PptRecord[] {
+function children(view: DataView, parent: PptRecord, budget: TextBudget): PptRecord[] {
 	const result: PptRecord[] = [];
 	const end = parent.dataOffset + parent.recLen;
 	for (let pos = parent.dataOffset; pos < end;) {
 		if (end - pos < 8) throw new PptTextError('corrupt', 'Truncated child header');
+		if (++budget.records > budget.limits.maxRecords) throw new PptTextError('corrupt', 'PPT text resource limit exceeded: records');
 		const rec = recordAt(view, pos);
 		if (rec.dataOffset + rec.recLen > end) throw new PptTextError('corrupt', 'Child exceeds parent');
 		result.push(rec); pos = rec.dataOffset + rec.recLen;
 	}
 	return result;
 }
-function textAtom(view: DataView, rec: PptRecord): PptTextAtom | undefined {
+function textAtom(view: DataView, rec: PptRecord, budget: TextBudget): PptTextAtom | undefined {
 	if (rec.recType !== RT.TextCharsAtom && rec.recType !== RT.TextBytesAtom) return undefined;
 	if (rec.recVer !== 0 || rec.recInstance !== 0 || (rec.recType === RT.TextCharsAtom && rec.recLen % 2))
 		throw new PptTextError('corrupt', 'Invalid text atom');
+	budget.textBytes += rec.recLen;
+	if (budget.textBytes > budget.limits.maxTextBytes) throw new PptTextError('corrupt', 'PPT text resource limit exceeded: text bytes');
 	const wide = rec.recType === RT.TextCharsAtom;
 	let text = '';
 	for (let pos = rec.dataOffset; pos < rec.dataOffset + rec.recLen; pos += wide ? 2 : 1) {
@@ -59,14 +66,15 @@ function textAtom(view: DataView, rec: PptRecord): PptTextAtom | undefined {
 	}
 	return { text, headerOffset: rec.headerOffset, encoding: wide ? 'utf16' : 'compressed-unicode' };
 }
-function inlineText(view: DataView, parent: PptRecord): { texts: PptTextAtom[]; mirrors: PptRecord[] } {
+function inlineText(view: DataView, parent: PptRecord, budget: TextBudget, ambiguousAtoms: Set<number>): { texts: PptTextAtom[]; mirrors: PptRecord[] } {
 	const result: PptTextAtom[] = [];
 	const mirrors: PptRecord[] = [];
 	const stack: Array<{ parent: PptRecord; depth: number; shape?: PptRecord }> = [{ parent, depth: 0 }];
 	while (stack.length) {
 		const current = stack.pop()!;
 		if (current.depth > 128) throw new PptTextError('corrupt', 'Record nesting exceeds limit');
-		const records = children(view, current.parent);
+		const records = children(view, current.parent, budget);
+		markAmbiguousTextGroups(records, current.parent, ambiguousAtoms);
 		for (let i = records.length - 1; i >= 0; i--) {
 			const rec = records[i]!;
 			// ClientTextbox has atom framing but contains PPT records ([MS-ODRAW]).
@@ -74,7 +82,7 @@ function inlineText(view: DataView, parent: PptRecord): { texts: PptTextAtom[]; 
 				stack.push({ parent: rec, depth: current.depth + 1, shape: rec.recType === OA.SpContainer ? rec : current.shape });
 		}
 		for (const rec of records) {
-			const atom = textAtom(view, rec); if (atom) result.push(atom);
+			const atom = textAtom(view, rec, budget); if (atom) result.push(atom);
 			if (rec.recType === OA.FOPT || rec.recType === OA.TertiaryFOPT) {
 				if (rec.recInstance * 6 > rec.recLen) throw new PptTextError('corrupt', 'Invalid drawing property table');
 				for (let i = 0; i < rec.recInstance; i++) {
@@ -86,7 +94,25 @@ function inlineText(view: DataView, parent: PptRecord): { texts: PptTextAtom[]; 
 	}
 	return { texts: result.sort((a, b) => a.headerOffset - b.headerOffset), mirrors };
 }
-function inspect(input: Uint8Array): { model: PptTextDocument; stream: Uint8Array; mirroredAtoms: Set<number> } {
+/** A TextHeader owns one text atom; malformed groups remain readable but not editable. */
+function markAmbiguousTextGroups(records: PptRecord[], parent: PptRecord, ambiguous: Set<number>): void {
+	const textParent = parent.recType === OA.ClientTextbox || (parent.recType === RT.SlideListWithText && parent.recInstance === 0);
+	let atoms: number[] = [], validHeader = false;
+	const finish = () => { if (!validHeader || atoms.length !== 1) for (const offset of atoms) ambiguous.add(offset); atoms = []; };
+	for (const rec of records) {
+		if (rec.recType === RT.TextHeaderAtom || rec.recType === RT.SlidePersistAtom) {
+			finish();
+			validHeader = textParent && rec.recType === RT.TextHeaderAtom && rec.recVer === 0 && rec.recLen === 4
+				&& rec.recInstance <= (parent.recType === OA.ClientTextbox ? 0 : 5);
+		} else if (rec.recType === RT.TextCharsAtom || rec.recType === RT.TextBytesAtom) atoms.push(rec.headerOffset);
+	}
+	finish();
+}
+function inspect(input: Uint8Array, limits: PptTextReadLimits = {}): { model: PptTextDocument; stream: Uint8Array; mirroredAtoms: Set<number>; ambiguousAtoms: Set<number> } {
+	const checkedLimits = { ...DEFAULT_LIMITS, ...limits };
+	if (!Object.values(checkedLimits).every(value => Number.isSafeInteger(value) && value > 0)) throw new PptTextError('corrupt', 'Invalid text resource limit');
+	const budget: TextBudget = { records: 0, textBytes: 0, limits: checkedLimits };
+	const ambiguousAtoms = new Set<number>();
 	const current = readCompoundFileStream(input, ['Current User']);
 	const stream = readCompoundFileStream(input, ['PowerPoint Document']);
 	if (!current || !stream) throw new PptTextError('corrupt', 'Missing or malformed PowerPoint streams');
@@ -102,7 +128,7 @@ function inspect(input: Uint8Array): { model: PptTextDocument; stream: Uint8Arra
 	if (token !== HEADER_TOKEN_PLAIN) throw new PptTextError('corrupt', 'Unknown encryption token');
 	if (cv.getUint16(d + 14, true) !== 0x3f4 || cv.getUint8(d + 16) !== 3 || cv.getUint8(d + 17) !== 0)
 		throw new PptTextError('unsupported-version', 'Expected PowerPoint 97-2003 storage');
-	const { currentEdit, directory } = buildPersistDirectory(dv, cv.getUint32(d + 8, true));
+	const { currentEdit, directory } = buildPersistDirectory(dv, cv.getUint32(d + 8, true), { maxEntries: checkedLimits.maxRecords });
 	if (currentEdit.encryptSessionPersistIdRef !== undefined)
 		throw new PptTextError('encrypted', 'Encrypted persist objects are unsupported');
 	const docOffset = directory.get(currentEdit.docPersistIdRef);
@@ -111,11 +137,13 @@ function inspect(input: Uint8Array): { model: PptTextDocument; stream: Uint8Arra
 	if (doc.recVer !== 15) throw new PptTextError('corrupt', 'Invalid document container');
 	const slides: PptSlideText[] = [];
 	const slideIds = new Set<number>(), persistIds = new Set<number>();
-	for (const list of children(dv, doc)) {
+	for (const list of children(dv, doc, budget)) {
 		if (list.recType !== RT.SlideListWithText || list.recInstance !== 0) continue;
 		if (list.recVer !== 15) throw new PptTextError('corrupt', 'Invalid slide list');
 		let slide: PptSlideText | undefined;
-		for (const rec of children(dv, list)) {
+		const records = children(dv, list, budget);
+		markAmbiguousTextGroups(records, list, ambiguousAtoms);
+		for (const rec of records) {
 			if (rec.recType === RT.SlidePersistAtom) {
 				if (rec.recVer !== 0 || rec.recInstance !== 0 || rec.recLen !== 20)
 					throw new PptTextError('corrupt', 'Invalid slide persist atom');
@@ -124,9 +152,10 @@ function inspect(input: Uint8Array): { model: PptTextDocument; stream: Uint8Arra
 				if (slideIds.has(slide.slideId) || persistIds.has(persistId))
 					throw new PptTextError('corrupt', 'Duplicate slide identity');
 				slideIds.add(slide.slideId); persistIds.add(persistId);
+				if (slides.length >= checkedLimits.maxSlides) throw new PptTextError('corrupt', 'PPT text resource limit exceeded: slides');
 				slides.push(slide);
 			} else {
-				const atom = textAtom(dv, rec);
+				const atom = textAtom(dv, rec, budget);
 				if (atom) { if (!slide) throw new PptTextError('corrupt', 'Unowned outline text'); slide.texts.push(atom); }
 			}
 		}
@@ -137,18 +166,18 @@ function inspect(input: Uint8Array): { model: PptTextDocument; stream: Uint8Arra
 		if (offset === undefined) throw new PptTextError('corrupt', 'Missing active slide');
 		const rec = recordAt(dv, offset, RT.Slide);
 		if (rec.recVer !== 15) throw new PptTextError('corrupt', 'Invalid slide container');
-		const inline = inlineText(dv, rec);
+		const inline = inlineText(dv, rec, budget, ambiguousAtoms);
 		// Outline-to-shape refs are not resolved, so a mirrored slide's outline is unsafe.
 		if (inline.mirrors.length) for (const atom of slide.texts) mirroredAtoms.add(atom.headerOffset);
 		slide.texts.push(...inline.texts);
 		for (const atom of inline.texts) if (inline.mirrors.some(m => atom.headerOffset >= m.dataOffset && atom.headerOffset < m.dataOffset + m.recLen))
 			mirroredAtoms.add(atom.headerOffset);
 	}
-	return { stream, mirroredAtoms, model: { slides, unsupported: ['formatting', 'geometry', 'pictures', 'masters', 'notes', 'animations', 'embedded-objects'] } };
+	return { stream, mirroredAtoms, ambiguousAtoms, model: { slides, unsupported: ['formatting', 'geometry', 'pictures', 'masters', 'notes', 'animations', 'embedded-objects'] } };
 }
 /** Inspect active slide text without evaluating links, macros or embedded objects. */
-export function readPptSlideTexts(input: Uint8Array): PptTextDocument {
-	try { return inspect(input).model; }
+export function readPptSlideTexts(input: Uint8Array, limits: PptTextReadLimits = {}): PptTextDocument {
+	try { return inspect(input, limits).model; }
 	catch (error) {
 		if (error instanceof PptTextError) throw error;
 		throw new PptTextError('corrupt', error instanceof Error ? error.message : 'Malformed PPT');
@@ -211,12 +240,13 @@ export function editPptSlideText(input: Uint8Array, edit: {
 		edit = { slideIndex: edit.slideIndex, textIndex: edit.textIndex, expectedText: edit.expectedText, text: edit.text };
 		if (!Number.isSafeInteger(edit.slideIndex) || !Number.isSafeInteger(edit.textIndex) || edit.slideIndex < 0 || edit.textIndex < 0)
 			return reject('Invalid text location');
-		const { stream, model, mirroredAtoms } = inspect(input);
+		const { stream, model, mirroredAtoms, ambiguousAtoms } = inspect(input);
 		const atom = model.slides[edit.slideIndex]?.texts[edit.textIndex];
 		if (!atom || atom.text !== edit.expectedText) return reject('Text location or expected text does not match');
 		if (edit.text === atom.text) return { status: 'unchanged', bytes: input };
 		if (model.slides.reduce((count, slide) => count + slide.texts.filter(text => text.headerOffset === atom.headerOffset).length, 0) !== 1)
 			return reject('Text atom is shared by multiple active slide positions');
+		if (ambiguousAtoms.has(atom.headerOffset)) return reject('Text atom has no unique valid TextHeader owner');
 		if (mirroredAtoms.has(atom.headerOffset))
 			return reject('Text has an OOXML mirror that could override the binary text');
 		if (edit.text.length !== atom.text.length) return reject('Replacement must keep the UTF-16 character count');
