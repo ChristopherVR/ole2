@@ -49,6 +49,7 @@ const installed = JSON.parse(
 );
 assert.equal(installed.name, '@christophervr/ole2');
 await writeFile(join(directory, 'fixture.xls'), await readFile(new URL('../test/fixtures/xls/workbook-features.xls', import.meta.url)));
+await writeFile(join(directory, 'fixture-rich-strings.xls'), await readFile(new URL('../test/fixtures/xls/workbook-rich-strings.xls', import.meta.url)));
 await writeFile(join(directory, 'fixture-blanks.xls'), await readFile(new URL('../test/fixtures/xls/workbook-blanks.xls', import.meta.url)));
 await writeFile(join(directory, 'fixture.doc'), await readFile(new URL('../test/fixtures/doc/main-field.doc', import.meta.url)));
 await writeFile(join(directory, 'fixture-size.doc'), await readFile(new URL('../test/fixtures/doc/rich-size-runs.doc', import.meta.url)));
@@ -256,7 +257,62 @@ assert.equal(editXlsNumericCell(invalid, { row: 0, col: 0, value: 1 }).bytes, in
 const ppt = await buildPptFile({ widthEmu: 9144000, heightEmu: 5143500, slides: [{ shapes: [] }], pictures: [] });
 assert.ok(parseOle2(ppt.buffer).getStream('PowerPoint Document')?.length > 0);
 assert.equal(readPptSlideTexts(ppt).slides.length, 1);
+import { CfbStorage, CfbStream } from '@christophervr/ole2';
+import { CfbStorage as subpathStorage } from '@christophervr/ole2/ole2-document';
+assert.equal(CfbStorage, subpathStorage);
+const structure = parseOle2(new Uint8Array(readFileSync(new URL('./fixture.xls', import.meta.url))), {expect: 'cfb'});
+const workbookBefore = structure.getStream('Workbook');
+const attachments = structure.root.createStorage('Attachments');
+assert(attachments instanceof CfbStorage);
+const attachment = attachments.createStream('Note', new Uint8Array([1, 2, 3]));
+assert(attachment instanceof CfbStream);
+attachments.rename('Renamed');
+attachment.move([], 'Moved');
+assert.deepEqual(attachment.path, ['Moved']);
+attachments.delete();
+assert.deepEqual(structure.getStream('Workbook'), workbookBefore);
+assert.deepEqual(parseOle2(structure.serialize(), {expect: 'cfb'}).stream(['Moved']).bytes, new Uint8Array([1, 2, 3]));
+attachment.delete();
+assert.throws(() => attachment.bytes);
+const v4Structure = parseOle2(buildCompoundFile(listed.nodes, {...listed.options, majorVersion: 4}), {expect: 'cfb'});
+const v4Storage = v4Structure.root.createStorage('V4Attachments');
+const v4Stream = v4Storage.createStream('Payload', new Uint8Array([5, 6]));
+v4Storage.rename('V4Renamed'); v4Stream.move([], 'V4Moved'); v4Storage.delete();
+assert.deepEqual(v4Stream.bytes, new Uint8Array([5, 6]));
+const v4Saved = v4Structure.serialize();
+assert.equal(new DataView(v4Saved.buffer).getUint16(0x1a, true), 4);
+assert.equal(new DataView(v4Saved.buffer).getUint16(0x1e, true), 12);
+assert.equal(listCompoundFile(v4Saved).options.majorVersion, 4);
+assert.deepEqual(parseCompoundFile(v4Saved, {strict: true}).warnings, []);
+v4Stream.delete();
 console.log('Packed legacy OLE2 package works in an independent npm consumer.');
+import { editXlsStringScalarCell } from '@christophervr/ole2';
+import { editXlsStringScalarCell as subpathStringScalar } from '@christophervr/ole2/legacy-excel-string-scalar-conversion';
+assert.equal(editXlsStringScalarCell, subpathStringScalar);
+for (const value of [37.125, true, {error: '#N/A'}]) {
+  const source = new Uint8Array(readFileSync(new URL('./fixture-rich-strings.xls', import.meta.url)));
+  const model = parseXls(source);
+  model.sheets[0].cell(0, 0).value = value;
+  assert.deepEqual(parseXls(model.serialize()).sheets[0].cell(0, 0).value, value);
+  assert.equal(model.sheets[0].cell(0, 1).value, 'Shared plain text');
+  const result = editXlsStringScalarCell(source, {row: 0, col: 0, value});
+  assert.equal(result.status, 'edited');
+  assert.deepEqual(parseXls(result.bytes).sheets[0].cell(0, 0).value, value);
+}
+import { createXlsCell } from '@christophervr/ole2';
+import { createXlsCell as subpathCreateCell } from '@christophervr/ole2/legacy-excel-create-cell';
+assert.equal(createXlsCell, subpathCreateCell);
+for (const value of ['Created Ω 日本', true, {error: '#N/A'}]) {
+  const source = new Uint8Array(readFileSync(new URL('./fixture.xls', import.meta.url)));
+  const model = parseXls(source);
+  const cell = model.sheets[0].createCell(2, 6, value, 15);
+  assert.deepEqual(cell.value, value);
+  assert.equal(model.revision, 1);
+  assert.deepEqual(parseXls(model.serialize()).sheets[0].cell(2, 6).value, value);
+  const result = createXlsCell(source, {row: 2, col: 6, value, xf: 15});
+  assert.equal(result.status, 'edited');
+  assert.deepEqual(parseXls(result.bytes).sheets[0].cell(2, 6).value, value);
+}
 `,
 );
 run(process.execPath, [join(directory, 'verify.mjs')], directory);
@@ -267,6 +323,42 @@ import { readDocFib, readFcLcbAt, type DocFib, type DocCfbUnwrap } from '@christ
 import { parseOle2, parseDoc, parseXls, parsePpt, parseVsd, type Ole2File, type PptDocument, type VsdDocument, type DocParagraph } from '@christophervr/ole2';
 import { type VsdGeometrySection, type PptTextReadLimits, readPptSlideTexts, buildCompoundFile } from '@christophervr/ole2';
 import { type VsdEllipseGeometry, createXlsNumericCell } from '@christophervr/ole2';
+import { type CfbEntry, type CfbStorage, type CfbStream } from '@christophervr/ole2';
+import { createXlsCell, type XlsCreatableCellValue } from '@christophervr/ole2';
+import { editXlsStringScalarCell, type XlsStringScalarEdit } from '@christophervr/ole2';
+const stringConversion: XlsStringScalarEdit = {row: 0, col: 0, value: {error: '#N/A'}};
+editXlsStringScalarCell(new Uint8Array(), stringConversion);
+// @ts-expect-error String-to-string writes use the existing string editor.
+editXlsStringScalarCell(new Uint8Array(), {row: 0, col: 0, value: 'text'});
+// @ts-expect-error Null clearing is unsupported.
+editXlsStringScalarCell(new Uint8Array(), {row: 0, col: 0, value: null});
+const scalarValue: XlsCreatableCellValue = {error: '#N/A'};
+parseXls(new Uint8Array()).sheets[0]!.createCell(2, 6, scalarValue, 15);
+createXlsCell(new Uint8Array(), {row: 2, col: 6, value: true, xf: 15});
+// @ts-expect-error Blank creation is unsupported.
+parseXls(new Uint8Array()).sheets[0]!.createCell(2, 6, null, 15);
+// @ts-expect-error Creation requires an explicit existing cell XF.
+parseXls(new Uint8Array()).sheets[0]!.createCell(2, 6, 'text');
+// @ts-expect-error Excel error values use defined error codes.
+createXlsCell(new Uint8Array(), {row: 2, col: 6, value: {error: '#INVALID!'}, xf: 15});
+const rootStorage: CfbStorage = parseOle2(new Uint8Array(), {expect: 'cfb'}).root;
+const childStorage: CfbStorage = rootStorage.createStorage('Child');
+const childStream: CfbStream = childStorage.createStream('Data', new Uint8Array([1]));
+buildCompoundFile([], {majorVersion: 4});
+// @ts-expect-error Only supported CFB major versions can be selected.
+buildCompoundFile([], {majorVersion: 5});
+childStream.rename('NewName'); childStream.move([]); childStream.delete();
+for (const entry of rootStorage.children) {
+  const typedEntry: CfbEntry = entry;
+  if (typedEntry.kind === 'stream') { const data: Uint8Array = typedEntry.bytes; void data; }
+  else { const children: readonly CfbEntry[] = typedEntry.children; void children; }
+}
+// @ts-expect-error Storage navigation takes a single child name.
+rootStorage.storage(['Child']);
+// @ts-expect-error Paths are immutable snapshots.
+childStorage.path.push('Other');
+// @ts-expect-error Storage children cannot be directly replaced.
+rootStorage.children = [];
 const input = new Uint8Array();
 const model = parseOle2(input);
 const compatible: Ole2File = model;

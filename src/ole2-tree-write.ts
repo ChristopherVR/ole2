@@ -48,6 +48,8 @@ export interface CompoundFileNode {
 }
 
 export interface CompoundFileBuildOptions {
+	/** Sector layout. Defaults to v3 (512 bytes); v4 uses 4096 bytes. */
+	majorVersion?: 3 | 4;
 	rootClsid?: Uint8Array;
 	rootStateBits?: number;
 	rootModified?: Date;
@@ -56,7 +58,6 @@ export interface CompoundFileBuildOptions {
 	miniStreamCutoff?: number;
 }
 
-const SECTOR = 512;
 const MINI_SECTOR = 64;
 
 interface Node {
@@ -161,11 +162,14 @@ function buildTree(input: readonly CompoundFileNode[], options: CompoundFileBuil
 }
 
 /**
- * Build a v3 compound file from storages and streams. Parent storages are
+ * Build a v3 or v4 compound file from storages and streams. Parent storages are
  * created implicitly; list a storage explicitly to give it a CLSID, state
  * bits or timestamps, or to keep it when empty.
  */
 export function buildCompoundFile(nodes: readonly CompoundFileNode[], options: CompoundFileBuildOptions = {}): Uint8Array {
+	const majorVersion = options.majorVersion ?? 3;
+	if (majorVersion !== 3 && majorVersion !== 4) throw new Error('Unsupported CFB major version');
+	const sectorSize = majorVersion === 4 ? 4096 : 512;
 	const cutoff = options.miniStreamCutoff ?? 0x1000;
 	const ordered = buildTree(nodes, options);
 	const streams = ordered.filter((node) => node.type === ENTRY_TYPE_STREAM);
@@ -175,7 +179,7 @@ export function buildCompoundFile(nodes: readonly CompoundFileNode[], options: C
 	let next = 0;
 	const chains = new Map<Node, number[]>();
 	const allocate = (count: number) => Array.from({ length: count }, () => next++);
-	for (const node of regular) chains.set(node, allocate(Math.ceil(node.data!.length / SECTOR)));
+	for (const node of regular) chains.set(node, allocate(Math.ceil(node.data!.length / sectorSize)));
 
 	let miniSectors = 0;
 	const miniChains = new Map<Node, number[]>();
@@ -187,20 +191,20 @@ export function buildCompoundFile(nodes: readonly CompoundFileNode[], options: C
 	for (const node of mini) miniChains.get(node)!.forEach((id, i) => {
 		container.set(node.data!.subarray(i * MINI_SECTOR, (i + 1) * MINI_SECTOR), id * MINI_SECTOR);
 	});
-	const rootSectors = allocate(Math.ceil(container.length / SECTOR));
-	const dirSectors = Math.ceil((ordered.length * DIR_ENTRY_SIZE) / SECTOR);
+	const rootSectors = allocate(Math.ceil(container.length / sectorSize));
+	const dirSectors = Math.ceil((ordered.length * DIR_ENTRY_SIZE) / sectorSize);
 	const firstDir = next;
 	next += dirSectors;
-	const miniFatSectors = miniSectors ? Math.ceil((miniSectors * 4) / SECTOR) : 0;
+	const miniFatSectors = miniSectors ? Math.ceil((miniSectors * 4) / sectorSize) : 0;
 	const firstMiniFat = miniFatSectors ? next : ENDOFCHAIN;
 	next += miniFatSectors;
-	const { numFATSectors, numDIFATSectors } = sizeFatSectors(next, SECTOR);
+	const { numFATSectors, numDIFATSectors } = sizeFatSectors(next, sectorSize);
 	const firstFat = next;
 	next += numFATSectors;
 	const firstDifat = next;
 	next += numDIFATSectors;
 
-	const fat = new Int32Array(numFATSectors * (SECTOR / 4)).fill(-1);
+	const fat = new Int32Array(numFATSectors * (sectorSize / 4)).fill(-1);
 	for (const sectors of chains.values()) writeFatChain(fat, { start: sectors[0] ?? ENDOFCHAIN, sectors });
 	writeFatChain(fat, { start: rootSectors[0] ?? ENDOFCHAIN, sectors: rootSectors });
 	writeFatRun(fat, firstDir, dirSectors);
@@ -208,24 +212,29 @@ export function buildCompoundFile(nodes: readonly CompoundFileNode[], options: C
 	for (let i = 0; i < numFATSectors; i++) fat[firstFat + i] = FATSECT;
 	for (let i = 0; i < numDIFATSectors; i++) fat[firstDifat + i] = DIFSECT;
 
-	const out = new Uint8Array((next + 1) * SECTOR);
+	const out = new Uint8Array((next + 1) * sectorSize);
 	const view = new DataView(out.buffer);
 	writeHeader(view, out, {
 		numFATSectors, firstDirSector: firstDir, miniStreamCutoff: cutoff,
 		firstMiniFATSector: firstMiniFat, numMiniFATSectors: miniFatSectors,
 		firstFATSector: firstFat, firstDIFATSector: firstDifat, numDIFATSectors,
 	});
-	for (const [node, sectors] of chains) writeStreamSectors(out, node.data!, { start: sectors[0]!, sectors }, SECTOR);
-	if (rootSectors.length) writeStreamSectors(out, container, { start: rootSectors[0]!, sectors: rootSectors }, SECTOR);
+	if (majorVersion === 4) {
+		view.setUint16(0x1a, 4, true);
+		view.setUint16(0x1e, 12, true);
+		view.setUint32(0x28, dirSectors, true);
+	}
+	for (const [node, sectors] of chains) writeStreamSectors(out, node.data!, { start: sectors[0]!, sectors }, sectorSize);
+	if (rootSectors.length) writeStreamSectors(out, container, { start: rootSectors[0]!, sectors: rootSectors }, sectorSize);
 	if (miniFatSectors) {
-		const miniFat = new Int32Array(miniFatSectors * (SECTOR / 4)).fill(-1);
+		const miniFat = new Int32Array(miniFatSectors * (sectorSize / 4)).fill(-1);
 		for (const sectors of miniChains.values()) writeFatChain(miniFat, { start: sectors[0] ?? ENDOFCHAIN, sectors });
-		writeInt32Sectors(out, miniFat, firstMiniFat, miniFatSectors, SECTOR);
+		writeInt32Sectors(out, miniFat, firstMiniFat, miniFatSectors, sectorSize);
 	}
 
 	// Unused directory slots stay zero (empty, name length 0) except their links.
-	const dirBase = (firstDir + 1) * SECTOR;
-	for (let slot = ordered.length; slot < (dirSectors * SECTOR) / DIR_ENTRY_SIZE; slot++) {
+	const dirBase = (firstDir + 1) * sectorSize;
+	for (let slot = ordered.length; slot < (dirSectors * sectorSize) / DIR_ENTRY_SIZE; slot++) {
 		for (const field of [68, 72, 76]) view.setUint32(dirBase + slot * DIR_ENTRY_SIZE + field, NOSTREAM, true);
 	}
 	for (const node of ordered) {
@@ -250,9 +259,10 @@ export function buildCompoundFile(nodes: readonly CompoundFileNode[], options: C
 		}
 		view.setUint32(at + 116, start, true);
 		view.setUint32(at + 120, size, true);
+		view.setUint32(at + 124, Math.floor(size / 0x100000000), true);
 	}
-	writeInt32Sectors(out, fat, firstFat, numFATSectors, SECTOR);
-	writeDifatSectors(view, { firstFATSector: firstFat, numFATSectors, firstDIFATSector: firstDifat, numDIFATSectors, sectorSize: SECTOR });
+	writeInt32Sectors(out, fat, firstFat, numFATSectors, sectorSize);
+	writeDifatSectors(view, { firstFATSector: firstFat, numFATSectors, firstDIFATSector: firstDifat, numDIFATSectors, sectorSize: sectorSize });
 	return out;
 }
 
@@ -297,6 +307,8 @@ export function listCompoundFile(input: Uint8Array | ArrayBuffer, readOptions: O
 } {
 	const file = parseOle2(input, readOptions);
 	const { nodes, options } = collect(file, false);
+	const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+	if (new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint16(0x1a, true) === 4) options.majorVersion = 4;
 	return { nodes, options, warnings: file.warnings };
 }
 

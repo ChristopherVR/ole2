@@ -31,3 +31,23 @@ validation is not claimed for these synthetic container tests.
 
 Reference: [MS-CFB](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cfb/53989ce4-7b05-4f8d-829b-d08d6148375b),
 sections 2.2 (header), 2.3 (directory), and 2.6 (FAT).
+
+## Structural class operations
+
+`CfbDocument` and `CfbStorage` now support create, recursive delete, rename and
+move on canonical v4 inputs by rebuilding v4 allocation. This is a different
+preservation contract from the in-place resizing described above: reachable
+stream bytes, hierarchy and supported directory metadata are retained, while
+physical sectors, padding and slack are rebuilt. The output keeps 4096-byte
+sectors, correct directory-sector counts and zero header padding. Mini streams
+and empty storages/streams participate in structural edits; this does not add
+variable-length v4 mini-stream replacement through `stream.bytes`.
+
+`test/cfb-storage-v4.test.ts` covers independently generated v4 inputs,
+directory growth/shrink across 32-entry boundaries, multiple FAT/mini-FAT
+sectors, live handles, exact timestamps and metadata, and atomic malformed-count
+refusals. Existing DOC/PPT/XLS fixtures are also rewrapped into v4 containers
+and compared before/after structural edits for parsed content and original
+stream bytes. These rewrapped files are codec compatibility tests, not files
+generated or validated by native Office. DOC/PPT/XLS semantic editing remains
+the primary format-parity priority.

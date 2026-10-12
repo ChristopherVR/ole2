@@ -11,9 +11,10 @@ import { editXlsBoolErrorWorkbookStream, normalizeXlsErrorValue, isValidXlsBoolE
 import { OLE_MAGIC } from './ole2-parser-types.js';
 import { readCompoundFileStream, replaceCompoundFileStream } from './ole2-stream-edit.js';
 import { resizeCompoundFileStream } from './ole2-stream-resize.js';
+import { readPreservedXlsSst } from './legacy-excel-preserved-sst.js';
 
 export type XlsStoredCellEdit = { row: number; col: number; value: Exclude<XlsCellValue, null>; worksheetIndex?: number };
-type Source = 'blank' | 'bool-error';
+type Source = 'blank' | 'bool-error' | 'string';
 
 /** Every source and coordinate is validated against original physical records. */
 export function editXlsStoredCellWorkbookStream(input: Uint8Array, edit: XlsStoredCellEdit, sourceKind: Source): XlsPreservedStringResult {
@@ -21,11 +22,12 @@ export function editXlsStoredCellWorkbookStream(input: Uint8Array, edit: XlsStor
  // Capture caller values once; subsequent checked editors receive ordinary data.
  const row = edit.row, col = edit.col, worksheetIndex = edit.worksheetIndex ?? 0, supplied = edit.value;
  const value = supplied !== null && typeof supplied === 'object' ? normalizeXlsErrorValue(supplied) : supplied;
- if (!['blank','bool-error'].includes(sourceKind) || !Number.isInteger(row) || row < 0 || row > 65535 || !Number.isInteger(col) || col < 0 || col > 255 || !Number.isInteger(worksheetIndex) || worksheetIndex < 0 ||
+ if (!['blank','bool-error','string'].includes(sourceKind) || !Number.isInteger(row) || row < 0 || row > 65535 || !Number.isInteger(col) || col < 0 || col > 255 || !Number.isInteger(worksheetIndex) || worksheetIndex < 0 ||
   (sourceKind === 'bool-error' && typeof value !== 'number' && typeof value !== 'string') ||
+  (sourceKind === 'string' && typeof value === 'string') ||
   (typeof value === 'number' ? !Number.isFinite(value) : typeof value !== 'string' && typeof value !== 'boolean' && (value === undefined || value === null || typeof value !== 'object'))) return unchanged('invalid-edit');
  try {
-  const m = model(input), target = findTarget(input, m, { row, col, worksheetIndex }, sourceKind === 'blank' ? [0x0201, 0x00be] : [0x0205]);
+  const m = model(input), target = findTarget(input, m, { row, col, worksheetIndex }, sourceKind === 'blank' ? [0x0201, 0x00be] : sourceKind === 'string' ? [0x00fd] : [0x0205]);
   const range = m.worksheets[worksheetIndex]!, source = new DataView(input.buffer, input.byteOffset, input.byteLength);
   for (const record of m.records.filter(r => r.opcode === 0x00e5 && r.depth === 1 && r.headerOffset >= range.start && r.headerOffset < range.end)) {
    if (record.length < 2) reject('malformed-records');
@@ -40,16 +42,26 @@ export function editXlsStoredCellWorkbookStream(input: Uint8Array, edit: XlsStor
   // A valid temporary NUMBER lets the existing checked SST/BOOLERR writers reuse
   // their pointer and alias guards. Intermediate bytes never leave this call.
   let replacement: XlsCellRecordReplacement;
+  let working = input;
   if (sourceKind === 'blank') replacement = replaceXlsBlankRecord(input, target, col, typeof value === 'number' ? value : 0);
   else {
-   if (!isValidXlsBoolErrorRecordValue(source.getUint8(target.dataOffset + 7), source.getUint8(target.dataOffset + 6))) reject('malformed-records');
+   if (sourceKind === 'bool-error' && !isValidXlsBoolErrorRecordValue(source.getUint8(target.dataOffset + 7), source.getUint8(target.dataOffset + 6))) reject('malformed-records');
+   if (sourceKind === 'string') {
+    const sst = readPreservedXlsSst(input), labels = m.records.filter(record => record.opcode === 0x00fd);
+    if (sst.total < 1 || sst.total !== labels.length || m.records.find(record => record.headerOffset === sst.start)?.depth !== 1 ||
+     labels.some(record => record.length !== 10 || source.getUint32(record.dataOffset + 6, true) >= sst.entries.length)) reject('malformed-records');
+    // Retain every serialized SST entry and CONTINUE byte (including unused
+    // rich/phonetic strings); only the reference count loses the selected cell.
+    working = new Uint8Array(input);
+    new DataView(working.buffer).setUint32(sst.start + 4, sst.total - 1, true);
+   }
    const bytes = new Uint8Array(18), number = new DataView(bytes.buffer);
    number.setUint16(0,0x0203,true); number.setUint16(2,14,true);
    bytes.set(input.subarray(target.dataOffset,target.dataOffset+6),4);
    number.setFloat64(10,typeof value === 'number' ? value : 0,true);
    replacement = { start: target.headerOffset, end: target.dataOffset + target.length, bytes };
   }
-  const staged = applyXlsCellRecordReplacement(input, m, replacement);
+  const staged = applyXlsCellRecordReplacement(working, m, replacement);
   if (typeof value === 'number') return { status: 'edited', bytes: staged, recalculationRequired: true };
   const result = typeof value === 'string' ? editXlsStringWorkbookStream(staged, { row, col, worksheetIndex, value })
    : editXlsBoolErrorWorkbookStream(staged, { row, col, worksheetIndex, value: value! });

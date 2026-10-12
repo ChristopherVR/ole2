@@ -63,9 +63,8 @@ describe('typed boolean and error cell writes', () => {
   a.value='text';expect(a.type).toBe('string');expect(a.value).toBe('text');
   expect(document.revision).toBe(unchangedRevision+2);
  });
- it('rejects string/formula targets and invalid errors without dirtying the document',()=>{
+ it('rejects formula targets and invalid errors without dirtying the document',()=>{
   const bytes=fixture(),document=new XlsDocument(bytes),sheet=document.sheets[0]!;
-  expect(()=>{sheet.cell(1,0).value=true;}).toThrow(UnsupportedOle2EditError);
   expect(sheet.cell(3,0).type).toBe('formula');
   expect(()=>{sheet.cell(3,0).value={error:'#N/A'};}).toThrow(UnsupportedOle2EditError);
   expect(()=>{sheet.cell(0,1).value={error:'invalid'} as never;}).toThrow(UnsupportedOle2EditError);

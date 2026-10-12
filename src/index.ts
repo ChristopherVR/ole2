@@ -36,4 +36,6 @@ export * from './legacy-ppt-text-salvage.js';
 export * from './legacy-excel-biff8-edit.js';
 export { createXlsNumericCell } from './legacy-excel-create-numeric-cell.js';
 export type { XlsCreateNumericCell, XlsCreateNumericCellFailure, XlsCreateNumericCellResult } from './legacy-excel-create-numeric-cell.js';
+export * from './legacy-excel-create-cell.js';
+export * from './legacy-excel-string-scalar-conversion.js';
 export * from './legacy-excel-preserved-string-cell.js';

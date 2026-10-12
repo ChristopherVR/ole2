@@ -221,8 +221,12 @@ export function parseOle2(buffer: ArrayBuffer | Uint8Array, options: Ole2ReadOpt
 
 	// Read directory entries
 	if (firstDirectorySector > MAXREGSECT) throw new Ole2ParseError('Missing directory chain');
+	const directoryBytes = readMetadataChain(firstDirectorySector, 'directory');
+	if (strict && majorVersion === 4 && view.getUint32(0x28, true) !== directoryBytes.length / sectorSize) {
+		throw new Ole2ParseError('Unexpected directory sector count');
+	}
 	const entries: Ole2DirectoryEntry[] = readDirectory(
-		readMetadataChain(firstDirectorySector, 'directory'),
+		directoryBytes,
 		majorVersion,
 		strict,
 		warnings,

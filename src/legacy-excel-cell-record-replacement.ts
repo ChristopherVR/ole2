@@ -7,7 +7,7 @@ import { KNOWN_XLS_RECORDS, XLS_FRT_WRAPPER } from './legacy-excel-known-records
 export function applyXlsCellRecordReplacement(input: Uint8Array, m: Model, replacement: XlsCellRecordReplacement): Uint8Array {
  if (!Number.isSafeInteger(replacement.start) || !Number.isSafeInteger(replacement.end) || replacement.start < 0 || replacement.end <= replacement.start || replacement.end > input.length || !(replacement.bytes instanceof Uint8Array)) reject('malformed-records');
  const target = m.records.find(r => r.headerOffset === replacement.start);
- if (!target || target.dataOffset + target.length !== replacement.end || ![0x0201,0x00be,0x0205,0x0203,0x027e,0x00bd].includes(target.opcode)) reject('malformed-records');
+ if (!target || target.dataOffset + target.length !== replacement.end || ![0x0201,0x00be,0x0205,0x0203,0x027e,0x00bd,0x00fd].includes(target.opcode)) reject('malformed-records');
  const delta = replacement.bytes.length - (replacement.end - replacement.start);
  if (delta !== 0 && m.records.some(r => !KNOWN_XLS_RECORDS.has(r.opcode) || r.opcode === XLS_FRT_WRAPPER)) reject('unsupported-pointer-record');
  const map = (address: number): number => {

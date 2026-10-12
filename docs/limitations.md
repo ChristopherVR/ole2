@@ -15,7 +15,7 @@ For the per-format coverage table and the validation behind it, see [Format cove
 
 - Supported resize layouts: v3 containers with 512-byte sectors and at most 109 header-listed FAT sectors, and v4 regular streams with 4096-byte sectors.
 - Reading accepts only irregularities that cannot change stream bytes; see [CFB compatibility](./cfb-compatibility.md). In-place edits refuse irregular containers until they are rebuilt with `repairCompoundFile`.
-- In-place edits cannot create entries; adding, deleting or moving entries requires a full rebuild with `buildCompoundFile`, which writes v3 only.
+- `CfbStorage` and `CfbDocument` structural operations create, recursively delete, rename and move entries by rebuilding canonical allocation using the original v3/v4 version. They retain reachable stream contents and supported metadata, not physical layout, padding or slack. Irregular containers and incorrect v4 directory-sector counts are refused.
 - Not supported in place: creating new storage entries, external DIFAT expansion, variable-length v4 mini-stream edits and v4 mini/regular transitions, and high 64-bit stream sizes.
 - Allocations are appended, so shrinking a stream does not compact the file.
 - Only existing SummaryInformation text properties can be edited, and only when the value fits its slot. Creating or expanding properties and full property-set models are not supported.
@@ -35,7 +35,7 @@ See [CFB v4 preservation](./cfb-v4-preservation.md) for the tested and refused s
 
 - BIFF8 only; BIFF5 and earlier throw `unsupported-version`.
 - Formulas are never evaluated or written. Cached results are retained and `recalculationRequired` signals that the consuming application must recalculate.
-- No creation of missing cells, no edits to merged followers, and no string-to-BOOLERR conversion.
+- Missing scalar cells can be explicitly created only after a numeric predecessor in a verified existing ROW/DBCELL block, within saved DIMENSIONS and with an existing cell XF. No implicit creation, new rows, blank/formula creation or edits to merged followers. Existing LABELSST strings can become finite numbers, booleans or defined Excel errors; legacy LABEL records and formula string results refuse.
 - Records and layouts with unsafe pointer relocation are refused atomically.
 - A selected rich string becomes plain text while other shared aliases keep their formatting.
 - Charts, pictures, drawings, conditional formatting, data validation, pivot tables and VBA are listed as unsupported rather than decoded. There is no fresh-workbook writer.
