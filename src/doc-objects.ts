@@ -10,6 +10,7 @@ import { readOleObjects } from './doc-ole-objects.js';
 import { readInlinePictures } from './doc-pictures.js';
 import { readDocDrawing, readFloatingShapes } from './doc-shapes.js';
 import type { BlipBudget } from './doc-blip.js';
+import type { StoryContext } from './doc-story.js';
 import type { DocObjects, DocObjectsLimits } from './doc-objects-types.js';
 
 function guarded<T>(warnings: string[], label: string, fallback: T, run: () => T): T {
@@ -35,7 +36,11 @@ export function readDocObjects(input: Uint8Array, limits?: DocObjectsLimits): Do
 		if (error instanceof DocResourceLimitError) throw error;
 		return undefined;
 	}
-	if (!ctx) return undefined;
+	return ctx ? objectsFromContext(ctx) : undefined;
+}
+
+/** Read the object model from an already opened context (shares its text, FKP index and warnings). */
+export function objectsFromContext(ctx: StoryContext): DocObjects {
 	const budget: BlipBudget = { maxBlipBytes: ctx.limits.maxBlipBytes, maxTotalBlipBytes: ctx.limits.maxTotalBlipBytes, used: 0 };
 	const warnings = ctx.warnings;
 	const fields = guarded(warnings, 'Fields', [], () => readDocFields(ctx));

@@ -201,13 +201,18 @@ function finish(story: DocStoryId, t: TableBuilder): DocTable {
 	return { story, level: t.level, start: t.start, end: t.end, rows: tableRows };
 }
 
-/** Map each cell onto the union of all rows' boundaries so merged and ragged rows share grid columns. */
-function applyGridColumns(rows: DocTableRow[]): DocTableRow[] {
+/** Union of all rows' cell boundaries in twips (within 2 twips counts as one), so merged and ragged rows share grid columns. */
+export function gridBoundaries(rows: readonly DocTableRow[]): number[] {
 	const bounds: number[] = [];
 	for (const r of rows) for (const g of r.props?.gridTwips ?? []) bounds.push(g);
 	bounds.sort((a, b) => a - b);
 	const grid: number[] = [];
 	for (const b of bounds) if (grid.length === 0 || b - grid[grid.length - 1]! > 2) grid.push(b);
+	return grid;
+}
+
+function applyGridColumns(rows: DocTableRow[]): DocTableRow[] {
+	const grid = gridBoundaries(rows);
 	const index = (v: number) => {
 		let best = 0;
 		for (let i = 1; i < grid.length; i++) if (Math.abs(grid[i]! - v) < Math.abs(grid[best]! - v)) best = i;

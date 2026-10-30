@@ -22,3 +22,6 @@ PICT metafile BLIPs are inflated and returned as raw metafile bytes with their b
 Not decoded: OfficeArt group transforms, gradient/pattern fills, shadows and effects (the raw property
 table is on `DocFloatingShape.properties`), text box content (use `textboxId` with the text box story),
 form-field data and hyperlink binary data (`HFD`), and linked-object monikers.
+
+The object readers share one context with the formatting and structure readers (`openStoryContext`), and
+`readDocModel` places their results inside the block tree: see [DOC model](/doc-model).

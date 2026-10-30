@@ -50,6 +50,8 @@ export default defineConfig({
 				items: [
 					{ text: 'DOC paragraph alignment', link: '/doc-paragraph-alignment' },
 					{ text: 'DOC underline', link: '/doc-underline' },
+					{ text: 'DOC model', link: '/doc-model' },
+					{ text: 'DOC objects', link: '/doc-objects' },
 					{ text: 'PPT character runs', link: '/ppt-character-runs' },
 					{ text: 'PPT shape native cases', link: '/ppt-shape-native-cases' },
 					{ text: 'VSD shape order', link: '/vsd-shape-order' },

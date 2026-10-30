@@ -55,6 +55,7 @@ console.log(parseOle2(bytes, { expect: 'cfb' }).getStream('Example'));
 - **MS-CFB containers**: stream reading and writing, mini streams, FAT/DIFAT, in-place stream resizing and SummaryInformation metadata.
 - **Word**: main-body paragraphs, rich runs, direct formatting and guarded text edits.
 - **Word formatting**: `readDocFormatting(bytes, limits?)` returns the stylesheet, list definitions and instances, fonts, and main-story paragraphs and runs keyed by character position, with typed character and paragraph properties resolved through the style cascade (raw style references kept). Read-only; it is bounded by `DocFormattingLimits` and returns `undefined` for unreadable or encrypted files.
+- **Word model**: `readDocModel(bytes, limits?)` composes formatting, objects and structure into one block tree per story: paragraphs with formatted inline items (text, pictures, field marks, bookmarks, note and comment references, shape and text box anchors), tables with nested cell blocks, sections with their header and footer stories, styles, lists and fonts. Every story is formatted, not only the main one. See `docs/doc-model.md`.
 - **Excel**: whole-workbook reading (cells, cached formula results, styles, merges, comments, hyperlinks, names) and typed cell edits.
 - **PowerPoint**: active slides, text, shapes and notes, bounded text and geometry edits, and a binary `.ppt` writer (`buildPptFile`).
 - **Visio**: version 11 pages, shapes, drawing order, transforms, text and geometry, with preserving text and transform edits.

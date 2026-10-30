@@ -12,7 +12,7 @@ import { readComments, readNotes, readTextBoxes, type DocComment, type DocNote, 
 import { readDocSections, readFacingPages, type DocSection } from './doc-sections.js';
 import type { DocModelLimits } from './doc-limits.js';
 import { DEFAULT_DOC_LIMITS } from './doc-limits.js';
-import { openStoryContext, type DocStoryRange } from './doc-story.js';
+import { openStoryContext, type DocStoryRange, type StoryContext } from './doc-story.js';
 import { DocResourceLimitError } from './ole-document-doc-pieces.js';
 import { readDocTables, type DocTable } from './doc-tables.js';
 
@@ -53,7 +53,11 @@ export interface DocStructure {
  * in `limits` is exceeded; damaged individual parts are skipped with a warning.
  */
 export function readDocStructure(bytes: Uint8Array, limits?: DocStructureLimits): DocStructure {
-	const ctx = openStoryContext(bytes, limits);
+	return structureFromContext(openStoryContext(bytes, limits));
+}
+
+/** Read the structure from an already opened context (shares its text, FKP index and warnings). */
+export function structureFromContext(ctx: StoryContext): DocStructure {
 	const guard = <T>(name: string, fallback: T, fn: () => T): T => {
 		try {
 			return fn();

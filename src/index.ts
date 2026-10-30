@@ -71,3 +71,5 @@ export * from './doc-sections.js';
 export * from './doc-headers-footers.js';
 export * from './doc-notes.js';
 export * from './doc-structure.js';
+export * from './doc-model-types.js';
+export { readDocModel } from './doc-model.js';
