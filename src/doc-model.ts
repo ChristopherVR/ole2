@@ -139,6 +139,7 @@ function composeModel(ctx: StoryContext): DocModel {
 		styles: formatting.styles,
 		lists: formatting.lists,
 		fonts: formatting.fonts,
+		defaultFonts: formatting.defaultFonts,
 		properties: formatting.properties,
 		facingPages: structure.facingPages,
 		warnings: [...new Set([...ctx.warnings, ...formatting.warnings, ...objects.warnings, ...structure.warnings])],

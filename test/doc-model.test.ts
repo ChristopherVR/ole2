@@ -59,6 +59,12 @@ describe('readDocModel: formatting fixtures', () => {
 		expect(ps[5]!.list!.levelDefinition!.level).toBe(1);
 	});
 
+	it('reports the default fonts of the stylesheet header', () => {
+		const m = model('structure-notes');
+		expect(m.defaultFonts.ascii).toBeTruthy();
+		expect(m.defaultFonts.cs).toBe('Times New Roman');
+	});
+
 	it('formats runs and paragraphs (formatting-rich)', () => {
 		const m = model('formatting-rich');
 		const ps = paragraphs(m.body.blocks);

@@ -9,7 +9,7 @@
  *
  * @module doc-model-types
  */
-import type { DocCharProps } from './doc-char-props.js';
+import type { DocCharProps, DocFontNames } from './doc-char-props.js';
 import type { DocFont, DocProperties } from './doc-fonts.js';
 import type { DocParaProps } from './doc-para-props.js';
 import type { DocListDefinition, DocListLevel, DocListOverride, DocLists } from './doc-lists.js';
@@ -299,6 +299,8 @@ export interface DocModel {
 	readonly styles: readonly (DocStyle | undefined)[];
 	readonly lists: DocLists;
 	readonly fonts: readonly DocFont[];
+	/** Default font names per script class (document defaults, below the Normal style). */
+	readonly defaultFonts: DocFontNames;
 	readonly properties: DocProperties;
 	/** Document-wide odd/even header distinction. */
 	readonly facingPages: boolean;

@@ -8,7 +8,7 @@
  *
  * @module doc-formatting
  */
-import type { DocCharProps } from './doc-char-props.js';
+import type { DocCharProps, DocFontNames } from './doc-char-props.js';
 import { readDocFonts, readDocProperties } from './doc-fonts.js';
 import type { DocFont, DocProperties } from './doc-fonts.js';
 import { splitParagraphs } from './doc-formatting-paragraphs.js';
@@ -60,6 +60,8 @@ export interface DocFormatting {
 	styles: (DocStyle | undefined)[];
 	lists: DocLists;
 	fonts: DocFont[];
+	/** Default font names per script class (the stylesheet header's ftc defaults). */
+	defaultFonts: DocFontNames;
 	properties: DocProperties;
 	/** Main story length in characters (ccpText). */
 	characterCount: number;
@@ -109,8 +111,9 @@ export function formatFromContext(ctx: StoryContext, sectionEnds: ReadonlySet<nu
 		if (e.length <= 0) continue;
 		stories[id] = splitParagraphs({ ctx, resolver, cpStart: e.start, cpEnd: e.start + e.length, sectionEnds, counters });
 	}
+	const defaultFonts = resolver.withFontNames({ fontIds: { ...sheet.defaultFonts } }).fonts ?? {};
 	return {
-		styles: sheet.styles, lists, fonts, properties, characterCount: ctx.extents.main.length,
+		styles: sheet.styles, lists, fonts, defaultFonts, properties, characterCount: ctx.extents.main.length,
 		paragraphs: stories.main ?? [], stories, warnings: [...ctx.warnings, ...warnings],
 	};
 }
