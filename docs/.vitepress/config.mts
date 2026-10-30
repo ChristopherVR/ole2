@@ -11,7 +11,7 @@ export default defineConfig({
 			{ text: 'Formats', link: '/formats/models' },
 			{ text: 'API', link: '/api' },
 			{ text: 'Limitations', link: '/limitations' },
-			{ text: 'Releases', link: '/releases/0.13.0' },
+			{ text: 'Releases', link: '/releases/0.14.0' },
 		],
 		sidebar: [
 			{
@@ -62,7 +62,7 @@ export default defineConfig({
 			{
 				text: 'Release notes',
 				collapsed: true,
-				items: ['0.13.0', '0.12.0', '0.11.0', '0.9.0', '0.8.0', '0.7.0', '0.6.0', '0.5.0'].map((v) => ({
+				items: ['0.14.0', '0.13.0', '0.12.0', '0.11.0', '0.9.0', '0.8.0', '0.7.0', '0.6.0', '0.5.0'].map((v) => ({
 					text: v,
 					link: `/releases/${v}`,
 				})),
