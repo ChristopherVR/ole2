@@ -47,13 +47,25 @@ export interface DocStylesheet {
 	stiMaxWhenSaved: number;
 }
 
+/**
+ * Names of the built-in styles by standard style identifier, used when a file stores no name.
+ * Entries were checked against styles written by Word 16 (Title 62, Default Paragraph Font 65,
+ * Subtitle 74, Hyperlink 85, the note and comment styles); the Followed Hyperlink, Strong and
+ * Emphasis entries follow Hyperlink in sequence.
+ */
 const BUILTIN_NAMES: Record<number, string> = {
 	0: 'Normal', 1: 'Heading 1', 2: 'Heading 2', 3: 'Heading 3', 4: 'Heading 4', 5: 'Heading 5',
-	6: 'Heading 6', 7: 'Heading 7', 8: 'Heading 8', 9: 'Heading 9', 29: 'Footnote Text', 31: 'Header',
-	32: 'Footer', 34: 'Caption', 38: 'Footnote Reference', 41: 'Page Number', 43: 'Endnote Text',
-	64: 'Title', 67: 'Default Paragraph Font', 68: 'Body Text', 76: 'Subtitle', 87: 'Hyperlink',
-	88: 'FollowedHyperlink', 89: 'Strong', 90: 'Emphasis', 105: 'Table Normal',
+	6: 'Heading 6', 7: 'Heading 7', 8: 'Heading 8', 9: 'Heading 9', 19: 'TOC 1', 29: 'Footnote Text',
+	30: 'Comment Text', 31: 'Header', 32: 'Footer', 34: 'Caption', 38: 'Footnote Reference',
+	39: 'Comment Reference', 41: 'Page Number', 42: 'Endnote Reference', 43: 'Endnote Text',
+	62: 'Title', 65: 'Default Paragraph Font', 74: 'Subtitle', 85: 'Hyperlink',
+	86: 'FollowedHyperlink', 87: 'Strong', 88: 'Emphasis', 105: 'Table Normal',
 };
+
+/** The built-in name for a standard style identifier, or undefined when none is known. */
+export function builtInStyleName(sti: number): string | undefined {
+	return BUILTIN_NAMES[sti];
+}
 
 const SGC: Record<number, DocStyleType> = { 1: 'paragraph', 2: 'character', 3: 'table', 4: 'list' };
 
@@ -113,7 +125,7 @@ function readStd(std: Uint8Array, istd: number, cbBase: number, budget: SprmBudg
 	if (at & 1) at++;
 	const basedOn = w1 >> 4, next = w2 >> 4;
 	const style: DocStyle = {
-		istd, sti, type, builtIn: sti < 0xffe, name: name || BUILTIN_NAMES[sti] || '',
+		istd, sti, type, builtIn: sti < 0xffe, name: name || builtInStyleName(sti) || '',
 		paragraph: {}, character: {}, paragraphSprms: [], characterSprms: [],
 	};
 	if (basedOn !== 0xfff) style.basedOn = basedOn;
