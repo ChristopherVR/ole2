@@ -38,7 +38,7 @@ describe('DOC tables', () => {
 		expect(t.rows[2]!.props?.cantSplit).toBe(true);
 		expect(t.rows[1]!.cells[0]!.props?.shading?.background).toBe('FF0000');
 		expect(t.rows[2]!.cells[1]!.props?.verticalAlign).toBe('center');
-		expect(t.rows[0]!.props?.borders.top).toMatchObject({ style: 'single', widthEighthPt: 4 });
+		expect(t.rows[0]!.props?.borders.top).toMatchObject({ style: 'single', widthPt: 0.5 });
 		expect(t.rows[0]!.props?.borders.insideV?.style).toBe('single');
 	});
 

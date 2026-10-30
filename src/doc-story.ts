@@ -1,51 +1,42 @@
 /**
- * Shared context for reading the non-table structure of a legacy `.doc`:
- * the story layout of the document-wide character position (CP) space
- * ([MS-DOC] 2.4.1, FibRgLw97), decoded text, and bounded PLC access.
+ * The one shared context every `.doc` reader opens: streams, FIB, piece table,
+ * decoded text, the story layout of the document-wide character position (CP)
+ * space ([MS-DOC] 2.4.1, FibRgLw97), bounded PLC access and the shared FKP and
+ * sprm lookups.
+ *
+ * CP convention: a CP is always an absolute document CP unless a field is
+ * documented as story-relative. A {@link DocStoryRange} carries both: the story
+ * id, `cpStart`/`cpEnd` (absolute) and `start`/`end` (relative to the story).
  *
  * @module doc-story
  */
+import { firstRunEndingAfter, readFkpRuns } from './doc-fkp-runs.js';
+import type { DocFkpRun } from './doc-fkp-runs.js';
+import { resolveDocLimits } from './doc-limits.js';
+import type { DocModelLimits, ResolvedDocLimits } from './doc-limits.js';
+import { parseGrpprl } from './doc-sprm.js';
+import type { DocRawSprm, SprmBudget } from './doc-sprm.js';
 import { unwrapDocBytes } from './ole-document-doc-cfb.js';
-import { readDocFib, readFcLcbAt, type ParsedDocFib } from './ole-document-doc-fib.js';
-import { DocResourceLimitError, decodePiecesText, parseDocClx, type DocPiece } from './ole-document-doc-pieces.js';
+import { readDocFib, readFcLcbAt } from './ole-document-doc-fib.js';
+import type { FcLcb, ParsedDocFib } from './ole-document-doc-fib.js';
+import { DocResourceLimitError, decodePiecesText, parseDocClx } from './ole-document-doc-pieces.js';
+import type { DocPiece } from './ole-document-doc-pieces.js';
+import { readCompoundFileStream } from './ole2-stream-edit.js';
 
 /** The seven stories of a Word document, in CP order. */
 export type DocStoryId = 'main' | 'footnotes' | 'headers' | 'comments' | 'endnotes' | 'textboxes' | 'headerTextboxes';
 
-/** Application processing budgets; none is a format validity limit. */
-export interface DocStructureLimits {
-	/** UTF-16 positions across all stories (default 16,777,216). */
-	maxCharacters?: number;
-	/** Pieces in the piece table (default 65,536). */
-	maxPieces?: number;
-	/** Paragraphs scanned for table structure across all stories (default 1,000,000). */
-	maxParagraphs?: number;
-	/** Table cells produced (default 262,144). */
-	maxCells?: number;
-	/** Entries of any one PLC (sections, notes, comments, text boxes, header stories; default 65,536). */
-	maxEntries?: number;
-	/** Property modifiers decoded (default 1,048,576). */
-	maxSprms?: number;
-}
-
-export const DEFAULT_DOC_STRUCTURE_LIMITS: Readonly<Required<DocStructureLimits>> = Object.freeze({
-	maxCharacters: 16_777_216,
-	maxPieces: 65_536,
-	maxParagraphs: 1_000_000,
-	maxCells: 262_144,
-	maxEntries: 65_536,
-	maxSprms: 1_048_576,
-});
-
-/** A character range in one story; positions are relative to the story start. */
+/** A character range in one story. */
 export interface DocStoryRange {
 	readonly story: DocStoryId;
-	/** Story-relative start CP. */
+	/** Absolute document CP of the first character. */
+	readonly cpStart: number;
+	/** Absolute document CP just past the last character. */
+	readonly cpEnd: number;
+	/** Story-relative start (`cpStart` minus the story's base). */
 	readonly start: number;
-	/** Story-relative end CP (exclusive). */
+	/** Story-relative end, exclusive. */
 	readonly end: number;
-	/** Document-wide CP of `start` (equals `start` for the main story). */
-	readonly globalStart: number;
 	/** Raw characters of the range, including paragraph, cell and reference marks. */
 	readonly text: string;
 }
@@ -64,37 +55,63 @@ export interface Plc {
 }
 
 export interface StoryContext {
+	readonly input: Uint8Array;
 	readonly word: Uint8Array;
 	readonly table: Uint8Array;
+	/** The `Data` stream (inline picture and field data), when present. */
+	readonly data: Uint8Array | undefined;
 	readonly fib: ParsedDocFib;
 	readonly pieces: readonly DocPiece[];
+	readonly prcBytes: Uint8Array;
+	/** Text of every story, concatenated, indexed by absolute CP. */
 	readonly text: string;
-	readonly limits: Required<DocStructureLimits>;
+	readonly limits: ResolvedDocLimits;
 	readonly extents: Readonly<Record<DocStoryId, StoryExtent>>;
+	/** The non-empty stories, in CP order. */
+	readonly stories: readonly DocStoryRange[];
 	readonly warnings: string[];
+	/** Sprm budget shared by everything read through this context. */
+	readonly budget: SprmBudget;
 	/** Raw FibRgFcLcb97/2000/2002 pair, or empty when the index is beyond this FIB's array. */
-	pair(index: number): { fc: number; lcb: number };
+	pair(index: number): FcLcb;
 	range(story: DocStoryId, start: number, end: number): DocStoryRange;
-	/** Byte offset in WordDocument of CP `cp` (document-wide), or undefined if no piece covers it. */
+	/** The story an absolute CP lies in (`main` when outside every story). */
+	storyOf(cp: number): DocStoryId;
+	/** Byte offset in WordDocument of absolute CP `cp`, or undefined if no piece covers it. */
 	fcAt(cp: number): number | undefined;
 	plc(index: number, dataSize: number): Plc | undefined;
+	/** All CHPX or PAPX runs in file order, read once. */
+	fkpRuns(kind: 'chpx' | 'papx'): readonly DocFkpRun[];
+	/** The FKP run of `kind` covering byte `fc`. */
+	runAt(kind: 'chpx' | 'papx', fc: number): DocFkpRun | undefined;
+	/** The piece covering absolute CP `cp`. */
+	pieceAt(cp: number): DocPiece | undefined;
+	/** The grpprl of the piece's Prm1 exception, parsed once. */
+	pieceSprms(piece: DocPiece): readonly DocRawSprm[];
+	/** Direct character sprms at a CP: CHPX exceptions followed by piece PRM exceptions. */
+	sprmsAt(cp: number): readonly DocRawSprm[];
 }
 
-const ORDER: readonly DocStoryId[] = ['main', 'footnotes', 'headers', 'comments', 'endnotes', 'textboxes', 'headerTextboxes'];
+export const STORY_ORDER: readonly DocStoryId[] = ['main', 'footnotes', 'headers', 'comments', 'endnotes', 'textboxes', 'headerTextboxes'];
 // FibRgLw97 element index of each story length (ccpText, ccpFtn, ccpHdd, ccpAtn, ccpEdn, ccpTxbx, ccpHdrTxbx).
 const LW_INDEX = [3, 4, 5, 7, 8, 9, 10] as const;
+const NONE: FcLcb = { fc: 0, lcb: 0 };
 
-function resolveLimits(limits?: DocStructureLimits): Required<DocStructureLimits> {
-	const out = { ...DEFAULT_DOC_STRUCTURE_LIMITS, ...Object.fromEntries(Object.entries(limits ?? {}).filter(([, v]) => v !== undefined)) } as Required<DocStructureLimits>;
-	for (const v of Object.values(out)) {
-		if (!Number.isSafeInteger(v) || v < 0) throw new Error('DOC structure limits must be nonnegative safe integers');
+/** Grpprl bytes of each Prc in the CLX (Prm1 selects one by index). Damaged entries end the list. */
+function prcGrpprls(prcBytes: Uint8Array): Uint8Array[] {
+	const out: Uint8Array[] = [];
+	for (let at = 0; at + 3 <= prcBytes.length && prcBytes[at] === 1; ) {
+		const cb = prcBytes[at + 1]! | (prcBytes[at + 2]! << 8);
+		if (at + 3 + cb > prcBytes.length) break;
+		out.push(prcBytes.subarray(at + 3, at + 3 + cb));
+		at += 3 + cb;
 	}
 	return out;
 }
 
 /** Open the document, decode text, and lay out the stories. Throws on encrypted, unsupported or over-budget input. */
-export function openStoryContext(input: Uint8Array, limitsIn?: DocStructureLimits): StoryContext {
-	const limits = resolveLimits(limitsIn);
+export function openStoryContext(input: Uint8Array, limitsIn?: DocModelLimits): StoryContext {
+	const limits = resolveDocLimits(limitsIn);
 	const cfb = unwrapDocBytes(input);
 	if (!cfb) throw new Error('Not a readable Word 97-2003 document');
 	const word = cfb.wordDocBytes;
@@ -104,40 +121,61 @@ export function openStoryContext(input: Uint8Array, limitsIn?: DocStructureLimit
 	const view = new DataView(word.buffer, word.byteOffset, word.byteLength);
 	const extents = {} as Record<DocStoryId, StoryExtent>;
 	let base = 0;
-	ORDER.forEach((id, i) => {
+	STORY_ORDER.forEach((id, i) => {
 		const length = view.getInt32(lw + LW_INDEX[i]! * 4, true);
+		if (length < 0) throw new Error('Negative story length');
 		extents[id] = { start: base, length };
 		base += length;
 	});
 	if (base > limits.maxCharacters) throw new DocResourceLimitError('DOC character count exceeds the processing limit');
-	const pieces = parseDocClx(table, fib.clx, limits.maxPieces).pieces;
-	const text = decodePiecesText(word, pieces, base);
+	const clx = parseDocClx(table, fib.clx, limits.maxPieces);
+	const pieces = clx.pieces;
+	const total = Math.max(base, pieces.at(-1)?.cpEnd ?? 0);
+	if (total > limits.maxCharacters) throw new DocResourceLimitError('DOC text exceeds the processing limit');
+	const text = decodePiecesText(word, pieces, total);
 	const warnings: string[] = [];
+	const budget: SprmBudget = { remaining: limits.maxSprms };
 	const starts = pieces.map((p) => p.cpStart);
+	const prcs = prcGrpprls(clx.prcBytes);
+	const prcCache = new Map<number, readonly DocRawSprm[]>();
+	const runCache = new Map<string, readonly DocFkpRun[]>();
+	const sprmCache = new Map<number, readonly DocRawSprm[]>();
+
+	const range = (story: DocStoryId, start: number, end: number): DocStoryRange => {
+		const e = extents[story];
+		const s = Math.max(0, Math.min(start, e.length));
+		const t = Math.max(s, Math.min(end, e.length));
+		return Object.freeze({ story, cpStart: e.start + s, cpEnd: e.start + t, start: s, end: t, text: text.slice(e.start + s, e.start + t) });
+	};
+	const stories = STORY_ORDER.filter((id) => extents[id].length > 0).map((id) => range(id, 0, extents[id].length));
 
 	const ctx: StoryContext = {
+		input,
 		word,
 		table,
+		data: readCompoundFileStream(input, ['Data']),
 		fib,
 		pieces,
+		prcBytes: clx.prcBytes,
 		text,
 		limits,
 		extents,
+		stories,
 		warnings,
+		budget,
 		pair(index) {
 			try {
 				return readFcLcbAt(word, fib, index);
 			} catch {
-				return { fc: 0, lcb: 0 };
+				return NONE;
 			}
 		},
-		range(story, start, end) {
-			const e = extents[story];
-			const s = Math.max(0, Math.min(start, e.length));
-			const t = Math.max(s, Math.min(end, e.length));
-			return { story, start: s, end: t, globalStart: e.start + s, text: text.slice(e.start + s, e.start + t) };
+		range,
+		storyOf(cp) {
+			for (const s of stories) if (cp >= s.cpStart && cp < s.cpEnd) return s.story;
+			return 'main';
 		},
-		fcAt(cp) {
+		pieceAt(cp) {
 			let lo = 0;
 			let hi = starts.length;
 			while (lo < hi) {
@@ -146,8 +184,11 @@ export function openStoryContext(input: Uint8Array, limitsIn?: DocStructureLimit
 				else hi = mid;
 			}
 			const piece = pieces[lo - 1];
-			if (!piece || cp >= piece.cpEnd) return undefined;
-			return piece.fc + (cp - piece.cpStart) * (piece.compressed ? 1 : 2);
+			return piece && cp < piece.cpEnd ? piece : undefined;
+		},
+		fcAt(cp) {
+			const piece = ctx.pieceAt(cp);
+			return piece ? piece.fc + (cp - piece.cpStart) * (piece.compressed ? 1 : 2) : undefined;
 		},
 		plc(index, dataSize) {
 			const at = ctx.pair(index);
@@ -176,8 +217,46 @@ export function openStoryContext(input: Uint8Array, limitsIn?: DocStructureLimit
 			const dataStart = at.fc + (n + 1) * 4;
 			return { cps, count: n, dataAt: (i) => dataStart + i * dataSize };
 		},
+		fkpRuns(kind) {
+			let runs = runCache.get(kind);
+			if (!runs) {
+				try {
+					const at = kind === 'chpx' ? fib.plcfbteChpx : fib.plcfbtePapx;
+					runs = readFkpRuns(word, table, at, kind, { maxPages: limits.maxFormattingPages, maxRuns: limits.maxRuns });
+				} catch (e) {
+					if (e instanceof DocResourceLimitError) throw e;
+					warnings.push(`${kind === 'chpx' ? 'Character' : 'Paragraph'} formatting table unreadable: ${(e as Error).message}`);
+					runs = [];
+				}
+				runCache.set(kind, runs);
+			}
+			return runs;
+		},
+		runAt(kind, fc) {
+			const list = ctx.fkpRuns(kind);
+			const r = list[firstRunEndingAfter(list, fc)];
+			return r && r.fcStart <= fc ? r : undefined;
+		},
+		pieceSprms(piece) {
+			if ((piece.prm & 1) !== 1) return [];
+			const index = piece.prm >>> 1;
+			let hit = prcCache.get(index);
+			if (!hit) prcCache.set(index, (hit = prcs[index] ? parseGrpprl(prcs[index]!, budget) : []));
+			return hit;
+		},
+		sprmsAt(cp) {
+			const cached = sprmCache.get(cp);
+			if (cached) return cached;
+			const piece = ctx.pieceAt(cp);
+			let out: readonly DocRawSprm[] = [];
+			if (piece) {
+				const fc = piece.fc + (cp - piece.cpStart) * (piece.compressed ? 1 : 2);
+				const run = ctx.runAt('chpx', fc);
+				out = [...(run ? parseGrpprl(run.grpprl, budget) : []), ...ctx.pieceSprms(piece)];
+			}
+			if (sprmCache.size < 65_536) sprmCache.set(cp, out);
+			return out;
+		},
 	};
 	return ctx;
 }
-
-export const STORY_ORDER = ORDER;

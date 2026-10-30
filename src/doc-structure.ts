@@ -10,8 +10,23 @@
 import { readHeadersFooters, type DocHeaderFooter, type DocNoteSeparators } from './doc-headers-footers.js';
 import { readComments, readNotes, readTextBoxes, type DocComment, type DocNote, type DocTextBox } from './doc-notes.js';
 import { readDocSections, readFacingPages, type DocSection } from './doc-sections.js';
-import { openStoryContext, type DocStoryRange, type DocStructureLimits } from './doc-story.js';
+import type { DocModelLimits } from './doc-limits.js';
+import { DEFAULT_DOC_LIMITS } from './doc-limits.js';
+import { openStoryContext, type DocStoryRange } from './doc-story.js';
+import { DocResourceLimitError } from './ole-document-doc-pieces.js';
 import { readDocTables, type DocTable } from './doc-tables.js';
+
+/** Processing budgets the structure reader honours (a subset of {@link DocModelLimits}). */
+export type DocStructureLimits = Pick<DocModelLimits, 'maxCharacters' | 'maxPieces' | 'maxParagraphs' | 'maxCells' | 'maxEntries' | 'maxSprms'>;
+
+export const DEFAULT_DOC_STRUCTURE_LIMITS: Readonly<Required<DocStructureLimits>> = Object.freeze({
+	maxCharacters: DEFAULT_DOC_LIMITS.maxCharacters,
+	maxPieces: DEFAULT_DOC_LIMITS.maxPieces,
+	maxParagraphs: DEFAULT_DOC_LIMITS.maxParagraphs,
+	maxCells: DEFAULT_DOC_LIMITS.maxCells,
+	maxEntries: DEFAULT_DOC_LIMITS.maxEntries,
+	maxSprms: DEFAULT_DOC_LIMITS.maxSprms,
+});
 
 export interface DocStructure {
 	readonly sections: readonly DocSection[];
@@ -39,17 +54,16 @@ export interface DocStructure {
  */
 export function readDocStructure(bytes: Uint8Array, limits?: DocStructureLimits): DocStructure {
 	const ctx = openStoryContext(bytes, limits);
-	const budget = { remaining: ctx.limits.maxSprms };
 	const guard = <T>(name: string, fallback: T, fn: () => T): T => {
 		try {
 			return fn();
 		} catch (e) {
-			if (e instanceof Error && e.name === 'DocResourceLimitError') throw e;
+			if (e instanceof DocResourceLimitError) throw e;
 			ctx.warnings.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
 			return fallback;
 		}
 	};
-	const sections = guard('sections', [] as DocSection[], () => readDocSections(ctx, budget));
+	const sections = guard('sections', [] as DocSection[], () => readDocSections(ctx));
 	const facingPages = guard('dop', false, () => readFacingPages(ctx));
 	const sectionEnds = new Set(sections.map((s) => s.end));
 	const hf = guard('headers', { headersFooters: [] as DocHeaderFooter[], separators: undefined as DocNoteSeparators | undefined }, () =>
@@ -57,7 +71,7 @@ export function readDocStructure(bytes: Uint8Array, limits?: DocStructureLimits)
 	);
 	return {
 		sections,
-		tables: guard('tables', [] as DocTable[], () => readDocTables(ctx, sectionEnds, budget)),
+		tables: guard('tables', [] as DocTable[], () => readDocTables(ctx, sectionEnds)),
 		headersFooters: hf.headersFooters,
 		noteSeparators: hf.separators,
 		facingPages,

@@ -26,9 +26,9 @@ export function readExtendedSttbf(bytes: Uint8Array, max: number): string[] | un
 }
 
 export function readDocBookmarks(ctx: DocObjectsContext): DocBookmark[] {
-	const names = tableRange(ctx, ctx.fcLcb(FCLCB.sttbfBkmk));
-	const bkf = tableRange(ctx, ctx.fcLcb(FCLCB.plcfBkf));
-	const bkl = tableRange(ctx, ctx.fcLcb(FCLCB.plcfBkl));
+	const names = tableRange(ctx, ctx.pair(FCLCB.sttbfBkmk));
+	const bkf = tableRange(ctx, ctx.pair(FCLCB.plcfBkf));
+	const bkl = tableRange(ctx, ctx.pair(FCLCB.plcfBkl));
 	if (!names || !bkf || !bkl) return [];
 	const list = readExtendedSttbf(names, ctx.limits.maxRecords);
 	if (!list) { ctx.warnings.push('Bookmark name table is unreadable'); return []; }

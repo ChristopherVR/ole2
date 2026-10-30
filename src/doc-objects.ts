@@ -2,7 +2,8 @@
  * legacy Word document, positioned by absolute CP so a formatting or text reader
  * can be composed with the result. */
 import { DocResourceLimitError } from './ole-document-doc-pieces.js';
-import { openDocObjects, resolveLimits } from './doc-objects-context.js';
+import { resolveDocLimits } from './doc-limits.js';
+import { openDocObjects } from './doc-objects-context.js';
 import { readDocBookmarks } from './doc-bookmarks.js';
 import { readDocFields } from './doc-fields.js';
 import { readOleObjects } from './doc-ole-objects.js';
@@ -27,7 +28,7 @@ function guarded<T>(warnings: string[], label: string, fallback: T, run: () => T
  * in `warnings` instead.
  */
 export function readDocObjects(input: Uint8Array, limits?: DocObjectsLimits): DocObjects | undefined {
-	resolveLimits(limits); // invalid limits are a caller error, not a damaged file
+	resolveDocLimits(limits); // invalid limits are a caller error, not a damaged file
 	let ctx;
 	try { ctx = openDocObjects(input, limits); }
 	catch (error) {

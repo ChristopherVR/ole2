@@ -89,7 +89,7 @@ export function readDocFields(ctx: DocObjectsContext): DocField[] {
 	const partials: Partial[] = [];
 	const stories: DocStoryKind[] = [];
 	for (const [index, story] of FIELD_TABLES) {
-		const bytes = tableRange(ctx, ctx.fcLcb(index));
+		const bytes = tableRange(ctx, ctx.pair(index));
 		const base = ctx.stories.find((s) => s.story === story)?.cpStart;
 		if (!bytes || base === undefined) continue;
 		const before = partials.length;

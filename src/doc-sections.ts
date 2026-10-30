@@ -6,7 +6,12 @@
  * @module doc-sections
  */
 import type { StoryContext } from './doc-story.js';
-import { lastSprm, operandI16, operandU16, operandU8, readGrpprl, type DocStructureSprm, type SprmBudget } from './doc-sprm-reader.js';
+import { findSprm as lastSprm, i16, parseGrpprl, u16, u8 } from './doc-sprm.js';
+import type { DocRawSprm } from './doc-sprm.js';
+
+const operandU8 = (s: DocRawSprm | undefined) => (s ? u8(s.operand) : undefined);
+const operandU16 = (s: DocRawSprm | undefined) => (s ? u16(s.operand) : undefined);
+const operandI16 = (s: DocRawSprm | undefined) => (s ? i16(s.operand) : undefined);
 
 export type DocSectionBreak = 'continuous' | 'newColumn' | 'nextPage' | 'evenPage' | 'oddPage';
 export type DocPageNumberFormat = 'decimal' | 'upperRoman' | 'lowerRoman' | 'upperLetter' | 'lowerLetter' | 'other';
@@ -47,7 +52,7 @@ export interface DocSection {
 	readonly pageNumberStart: number | undefined;
 	readonly pageNumberRestart: boolean;
 	/** Raw section sprms, for callers that decode more. */
-	readonly sprms: readonly DocStructureSprm[];
+	readonly sprms: readonly DocRawSprm[];
 }
 
 const BREAKS: readonly DocSectionBreak[] = ['continuous', 'newColumn', 'nextPage', 'evenPage', 'oddPage'];
@@ -63,7 +68,7 @@ export function readFacingPages(ctx: StoryContext): boolean {
 }
 
 /** Read every section; returns an empty list when the document has no PlcfSed. */
-export function readDocSections(ctx: StoryContext, budget: SprmBudget): DocSection[] {
+export function readDocSections(ctx: StoryContext): DocSection[] {
 	const plc = ctx.plc(PLCF_SED, 12);
 	if (!plc) return [];
 	const wv = new DataView(ctx.word.buffer, ctx.word.byteOffset, ctx.word.byteLength);
@@ -72,13 +77,13 @@ export function readDocSections(ctx: StoryContext, budget: SprmBudget): DocSecti
 	const out: DocSection[] = [];
 	for (let i = 0; i < plc.count; i++) {
 		const fcSepx = tv.getUint32(plc.dataAt(i) + 2, true);
-		let sprms: DocStructureSprm[] = [];
+		let sprms: readonly DocRawSprm[] = [];
 		if (fcSepx !== 0xffffffff) {
 			if (fcSepx + 2 > ctx.word.length) {
 				ctx.warnings.push(`Section ${i} Sepx lies outside WordDocument`);
 			} else {
 				const cb = wv.getUint16(fcSepx, true);
-				sprms = readGrpprl(ctx.word, fcSepx + 2, Math.min(fcSepx + 2 + cb, ctx.word.length), budget);
+				sprms = parseGrpprl(ctx.word.subarray(fcSepx + 2, Math.min(fcSepx + 2 + cb, ctx.word.length)), ctx.budget);
 			}
 		}
 		out.push(decodeSection(i, plc.cps[i]!, Math.min(plc.cps[i + 1]!, mainLength), sprms));
@@ -86,7 +91,7 @@ export function readDocSections(ctx: StoryContext, budget: SprmBudget): DocSecti
 	return out;
 }
 
-function decodeSection(index: number, start: number, end: number, sprms: DocStructureSprm[]): DocSection {
+function decodeSection(index: number, start: number, end: number, sprms: readonly DocRawSprm[]): DocSection {
 	const num = (op: number, dflt: number, signed = false) => (signed ? operandI16(lastSprm(sprms, op)) : operandU16(lastSprm(sprms, op))) ?? dflt;
 	const flag = (op: number) => (operandU8(lastSprm(sprms, op)) ?? 0) !== 0;
 	const columnCount = (operandU16(lastSprm(sprms, 0x500b)) ?? 0) + 1;

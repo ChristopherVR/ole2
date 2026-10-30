@@ -26,7 +26,7 @@ export interface DocDrawing {
 /** Parse OfficeArtContent: the drawing group (BLIP store) and every drawing's shapes. */
 export function readDocDrawing(ctx: DocObjectsContext, budget: BlipBudget): DocDrawing {
 	const empty: DocDrawing = { blips: [], shapes: new Map() };
-	const bytes = tableRange(ctx, ctx.fcLcb(FCLCB.dggInfo));
+	const bytes = tableRange(ctx, ctx.pair(FCLCB.dggInfo));
 	if (!bytes) return empty;
 	const dgg = readArtRecord(bytes, 0, bytes.length);
 	if (!dgg || dgg.type !== ART.dggContainer) {
@@ -89,7 +89,7 @@ function shapeFrom(
 export function readFloatingShapes(ctx: DocObjectsContext, drawing: DocDrawing): DocFloatingShape[] {
 	const out: DocFloatingShape[] = [];
 	for (const [index, storyBase] of [[FCLCB.spaMom, 0], [FCLCB.spaHdr, ctx.stories.find((s) => s.story === 'headers')?.cpStart ?? 0]] as const) {
-		const bytes = tableRange(ctx, ctx.fcLcb(index));
+		const bytes = tableRange(ctx, ctx.pair(index));
 		if (!bytes) continue;
 		if (bytes.length < 4 || (bytes.length - 4) % (4 + FSPA_SIZE) !== 0) {
 			ctx.warnings.push('FSPA table has an invalid length');

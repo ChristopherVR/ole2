@@ -2,38 +2,24 @@
  * fields, bookmarks and embedded objects). Positions are absolute character
  * positions (CPs) across all stories, as in the piece table. */
 
-export type DocStoryKind = 'main' | 'footnotes' | 'headers' | 'comments' | 'endnotes' | 'textboxes' | 'headerTextboxes';
+import { DEFAULT_DOC_LIMITS } from './doc-limits.js';
+import type { DocModelLimits as DocLimitsBase } from './doc-limits.js';
+import type { DocStoryId, DocStoryRange } from './doc-story.js';
 
-/** One story's absolute CP range (cpEnd exclusive). */
-export interface DocStoryRange {
-	readonly story: DocStoryKind;
-	readonly cpStart: number;
-	readonly cpEnd: number;
-}
+/** Story identifier (alias of {@link DocStoryId}). */
+export type DocStoryKind = DocStoryId;
 
-/** Processing budget; every table is validated against these before allocation. */
-export interface DocObjectsLimits {
-	/** Characters decoded across all stories. Default 16,777,216. */
-	maxCharacters?: number;
-	/** Piece table entries. Default 65,536. */
-	maxPieces?: number;
-	/** Records per table (fields, bookmarks, shapes, BLIPs, pictures, objects). Default 65,536. */
-	maxRecords?: number;
-	/** Largest single image (compressed or decompressed). Default 67,108,864. */
-	maxBlipBytes?: number;
-	/** Total image bytes returned. Default 268,435,456. */
-	maxTotalBlipBytes?: number;
-	/** OfficeArt container nesting depth. Default 16. */
-	maxArtDepth?: number;
-}
+/** Processing budget for the object readers (a subset of {@link DocModelLimits}). */
+export type DocObjectsLimits = Pick<DocLimitsBase, 'maxCharacters' | 'maxPieces' | 'maxRecords' | 'maxBlipBytes' | 'maxTotalBlipBytes' | 'maxArtDepth' | 'maxSprms'>;
 
 export const DEFAULT_DOC_OBJECTS_LIMITS: Readonly<Required<DocObjectsLimits>> = Object.freeze({
-	maxCharacters: 16_777_216,
-	maxPieces: 65_536,
-	maxRecords: 65_536,
-	maxBlipBytes: 67_108_864,
-	maxTotalBlipBytes: 268_435_456,
-	maxArtDepth: 16,
+	maxCharacters: DEFAULT_DOC_LIMITS.maxCharacters,
+	maxPieces: DEFAULT_DOC_LIMITS.maxPieces,
+	maxRecords: DEFAULT_DOC_LIMITS.maxRecords,
+	maxBlipBytes: DEFAULT_DOC_LIMITS.maxBlipBytes,
+	maxTotalBlipBytes: DEFAULT_DOC_LIMITS.maxTotalBlipBytes,
+	maxArtDepth: DEFAULT_DOC_LIMITS.maxArtDepth,
+	maxSprms: DEFAULT_DOC_LIMITS.maxSprms,
 });
 
 export type DocBlipFormat = 'png' | 'jpeg' | 'bmp' | 'emf' | 'wmf' | 'pict' | 'tiff';

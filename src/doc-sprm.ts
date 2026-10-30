@@ -90,6 +90,24 @@ export function modernLast(sprms: readonly DocRawSprm[]): readonly DocRawSprm[] 
 	return [...sprms.filter((s) => LEGACY.has(s.opcode)), ...sprms.filter((s) => !LEGACY.has(s.opcode))];
 }
 
+/** Last sprm with `opcode` (later sprms override earlier ones). */
+export function findSprm(sprms: readonly DocRawSprm[], opcode: number): DocRawSprm | undefined {
+	for (let i = sprms.length - 1; i >= 0; i--) if (sprms[i]!.opcode === opcode) return sprms[i];
+	return undefined;
+}
+
+/** Unsigned little-endian value of up to the first four operand bytes. */
+export function sprmUint(r: DocRawSprm): number {
+	let v = 0;
+	for (let i = Math.min(r.operand.length, 4) - 1; i >= 0; i--) v = v * 256 + r.operand[i]!;
+	return v;
+}
+
+/** Toggle operand: 1 is on; 0x80/0x81 refer to the style and count as absent. */
+export function sprmFlag(sprms: readonly DocRawSprm[], opcode: number): boolean {
+	return findSprm(sprms, opcode)?.operand[0] === 1;
+}
+
 /** Little-endian readers over an operand. Return undefined when the operand is too short. */
 export function u8(o: Uint8Array, at = 0): number | undefined {
 	return at < o.length ? o[at] : undefined;

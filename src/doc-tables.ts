@@ -8,10 +8,10 @@
  * @module doc-tables
  */
 import { DocResourceLimitError } from './ole-document-doc-pieces.js';
-import { buildPapxIndex, type DocParaProps } from './doc-papx-index.js';
+import { paragraphInfoAt, tableLevel } from './doc-papx-index.js';
+import type { DocParaInfo } from './doc-papx-index.js';
 import { readRowProps, type DocCellProps, type DocRowProps } from './doc-table-props.js';
 import { STORY_ORDER, type DocStoryId, type StoryContext } from './doc-story.js';
-import type { SprmBudget } from './doc-sprm-reader.js';
 
 export interface DocTableCell {
 	/** Story-relative CP of the cell's first character. */
@@ -67,36 +67,34 @@ interface TableBuilder {
 interface Mark {
 	kind: 'text' | 'cell' | 'row';
 	level: number;
-	props: DocParaProps | undefined;
+	props: DocParaInfo | undefined;
 }
 
-function classify(ch: string, p: DocParaProps | undefined): Mark {
-	if (!p || !p.inTable) return { kind: 'text', level: 0, props: p };
-	const level = Math.max(1, p.itap);
-	if (p.rowEnd || p.innerRowEnd) return { kind: 'row', level, props: p };
-	if (p.innerCell || ch === '\x07') return { kind: 'cell', level, props: p };
+function classify(ch: string, p: DocParaInfo): Mark {
+	if (!p.props.inTable) return { kind: 'text', level: 0, props: p };
+	const level = Math.max(1, tableLevel(p.props));
+	if (p.props.tableRowEnd || p.props.innerTableRowEnd) return { kind: 'row', level, props: p };
+	if (p.props.innerTable || ch === '') return { kind: 'cell', level, props: p };
 	return { kind: 'text', level, props: p };
 }
 
 /** Find every table in every story. `sectionEnds` are main-story CPs just past a section mark. */
-export function readDocTables(ctx: StoryContext, sectionEnds: ReadonlySet<number>, budget: SprmBudget): DocTable[] {
+export function readDocTables(ctx: StoryContext, sectionEnds: ReadonlySet<number>): DocTable[] {
 	const hasContent = STORY_ORDER.some((s) => ctx.extents[s].length > 0);
 	if (!hasContent) return [];
-	const papx = buildPapxIndex(ctx.word, ctx.table, ctx.fib.plcfbtePapx, ctx.limits.maxPieces, budget);
 	const tables: DocTable[] = [];
 	const counters = { paragraphs: 0, cells: 0 };
 	for (const story of STORY_ORDER) {
 		const ext = ctx.extents[story];
 		const end = Math.min(ext.start + ext.length, ctx.text.length);
 		if (end <= ext.start) continue;
-		scanStory(ctx, papx, story, ext.start, end, sectionEnds, counters, tables);
+		scanStory(ctx, story, ext.start, end, sectionEnds, counters, tables);
 	}
 	return tables;
 }
 
 function scanStory(
 	ctx: StoryContext,
-	papx: ReturnType<typeof buildPapxIndex>,
 	story: DocStoryId,
 	base: number,
 	end: number,
@@ -122,8 +120,7 @@ function scanStory(
 		const isEnd = ch === '\r' || ch === '\x07' || (ch === '\x0c' && story === 'main' && sectionEnds.has(cp + 1));
 		if (!isEnd && !last) continue;
 		if (++counters.paragraphs > ctx.limits.maxParagraphs) throw new DocResourceLimitError('DOC paragraph count exceeds the processing limit');
-		const fc = ctx.fcAt(cp);
-		const mark = classify(ch, fc === undefined ? undefined : papx.at(fc));
+		const mark = classify(ch, paragraphInfoAt(ctx, cp));
 		const pEnd = cp + 1;
 		if (mark.level === 0) {
 			closeTo(0);
@@ -169,7 +166,7 @@ function scanStory(
 	}
 }
 
-function makeRow(row: RowBuilder, markCp: number, end: number, p: DocParaProps | undefined): DocTableRow {
+function makeRow(row: RowBuilder, markCp: number, end: number, p: DocParaInfo | undefined): DocTableRow {
 	const props = p ? readRowProps(p.tap) : undefined;
 	return { start: row.start, end, markCp, cells: assignCells(row.cells, props), props };
 }
