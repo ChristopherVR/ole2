@@ -54,6 +54,7 @@ console.log(parseOle2(bytes, { expect: 'cfb' }).getStream('Example'));
 - **Document models** for DOC, XLS, PPT and VSD with checked parsing and transactional edits.
 - **MS-CFB containers**: stream reading and writing, mini streams, FAT/DIFAT, in-place stream resizing and SummaryInformation metadata.
 - **Word**: main-body paragraphs, rich runs, direct formatting and guarded text edits.
+- **Word formatting**: `readDocFormatting(bytes, limits?)` returns the stylesheet, list definitions and instances, fonts, and main-story paragraphs and runs keyed by character position, with typed character and paragraph properties resolved through the style cascade (raw style references kept). Read-only; it is bounded by `DocFormattingLimits` and returns `undefined` for unreadable or encrypted files.
 - **Excel**: whole-workbook reading (cells, cached formula results, styles, merges, comments, hyperlinks, names) and typed cell edits.
 - **PowerPoint**: active slides, text, shapes and notes, bounded text and geometry edits, and a binary `.ppt` writer (`buildPptFile`).
 - **Visio**: version 11 pages, shapes, drawing order, transforms, text and geometry, with preserving text and transform edits.

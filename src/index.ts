@@ -9,6 +9,15 @@ export { VsdError, type VsdTransform, type VsdGeometry, type VsdGeometryRow, typ
 export * from './ole2-parser-types.js';
 export * from './ole2-parser-write.js';
 export * from './ole2-tree-write.js';
+export * from './doc-sprm.js';
+export * from './doc-char-props.js';
+export * from './doc-para-props.js';
+export * from './doc-fkp-runs.js';
+export * from './doc-fonts.js';
+export * from './doc-styles.js';
+export * from './doc-style-resolve.js';
+export * from './doc-lists.js';
+export * from './doc-formatting.js';
 export * from './ole-document-doc-cfb.js';
 export * from './ole-document-doc-cp1252.js';
 export * from './ole-document-doc-editor.js';
