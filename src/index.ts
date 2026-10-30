@@ -39,3 +39,12 @@ export type { XlsCreateNumericCell, XlsCreateNumericCellFailure, XlsCreateNumeri
 export * from './legacy-excel-create-cell.js';
 export * from './legacy-excel-string-scalar-conversion.js';
 export * from './legacy-excel-preserved-string-cell.js';
+export * from './doc-sprm-reader.js';
+export * from './doc-papx-index.js';
+export * from './doc-story.js';
+export * from './doc-table-props.js';
+export * from './doc-tables.js';
+export * from './doc-sections.js';
+export * from './doc-headers-footers.js';
+export * from './doc-notes.js';
+export * from './doc-structure.js';
