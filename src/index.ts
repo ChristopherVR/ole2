@@ -39,3 +39,16 @@ export type { XlsCreateNumericCell, XlsCreateNumericCellFailure, XlsCreateNumeri
 export * from './legacy-excel-create-cell.js';
 export * from './legacy-excel-string-scalar-conversion.js';
 export * from './legacy-excel-preserved-string-cell.js';
+export * from './doc-objects-types.js';
+export { readDocObjects } from './doc-objects.js';
+export { parseFieldInstruction } from './doc-field-instruction.js';
+export type { ParsedInstruction } from './doc-field-instruction.js';
+export { readDocFields } from './doc-fields.js';
+export { readDocBookmarks } from './doc-bookmarks.js';
+export { readInlinePictures } from './doc-pictures.js';
+export { readOleObjects, readCompObjProgId } from './doc-ole-objects.js';
+export { readDocDrawing, readFloatingShapes } from './doc-shapes.js';
+export { decodeBlip, decodeBStore } from './doc-blip.js';
+export { inflateZlib, inflateRaw, DocInflateError } from './doc-inflate.js';
+export { openDocObjects } from './doc-objects-context.js';
+export type { DocObjectsContext } from './doc-objects-context.js';
