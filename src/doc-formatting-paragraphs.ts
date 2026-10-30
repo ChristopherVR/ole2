@@ -1,7 +1,7 @@
 /**
- * Split the main story into paragraphs and runs, mapping CPs to file offsets
- * through the piece table (compressed and Unicode pieces, fast-saved files)
- * and looking formatting up in the sorted PAPX/CHPX ranges.
+ * Split one story into paragraphs and runs, mapping CPs to file offsets
+ * through the shared piece table (compressed and Unicode pieces, fast-saved
+ * files) and the shared PAPX/CHPX run indexes of the {@link StoryContext}.
  *
  * @module doc-formatting-paragraphs
  */
@@ -10,33 +10,29 @@ import type { DocCharProps } from './doc-char-props.js';
 import { firstRunEndingAfter } from './doc-fkp-runs.js';
 import type { DocFkpRun } from './doc-fkp-runs.js';
 import type { DocFormatParagraph, DocFormatRun } from './doc-formatting.js';
+import { paragraphInfoAt } from './doc-papx-index.js';
 import { parseGrpprl } from './doc-sprm.js';
-import type { DocRawSprm, SprmBudget } from './doc-sprm.js';
+import type { DocRawSprm } from './doc-sprm.js';
+import type { StoryContext } from './doc-story.js';
 import type { DocStyleResolver } from './doc-style-resolve.js';
 import { DocResourceLimitError } from './ole-document-doc-pieces.js';
 import type { DocPiece } from './ole-document-doc-pieces.js';
 
-export interface SplitInput {
-	text: string;
-	pieces: readonly DocPiece[];
-	prcBytes: Uint8Array;
-	chpx: readonly DocFkpRun[];
-	papx: readonly DocFkpRun[];
-	resolver: DocStyleResolver;
-	budget: SprmBudget;
-	maxParagraphs: number;
-	maxRuns: number;
+/** Counters shared across every story of one read, so the limits bound the whole document. */
+export interface SplitCounters {
+	paragraphs: number;
+	runs: number;
 }
 
-/** Prc records (clxt 1, cb, grpprl) in order; Prm1 selects one by index. */
-function parsePrcs(bytes: Uint8Array, budget: SprmBudget): DocRawSprm[][] {
-	const out: DocRawSprm[][] = [];
-	for (let at = 0; at + 3 <= bytes.length;) {
-		const cb = bytes[at + 1]! | (bytes[at + 2]! << 8);
-		out.push(parseGrpprl(bytes.subarray(at + 3, at + 3 + cb), budget));
-		at += 3 + cb;
-	}
-	return out;
+export interface SplitInput {
+	ctx: StoryContext;
+	resolver: DocStyleResolver;
+	/** Absolute CP range of the story to split. */
+	cpStart: number;
+	cpEnd: number;
+	/** Absolute CPs just past a section mark; a form feed there ends a paragraph (main story only). */
+	sectionEnds: ReadonlySet<number>;
+	counters: SplitCounters;
 }
 
 function deepFreeze<T extends DocCharProps>(p: T): T {
@@ -48,28 +44,27 @@ function deepFreeze<T extends DocCharProps>(p: T): T {
 const EMPTY: Uint8Array = new Uint8Array(0);
 
 export function splitParagraphs(input: SplitInput): DocFormatParagraph[] {
-	const { text, pieces, chpx, papx, resolver, budget } = input;
-	const prcs = parsePrcs(input.prcBytes, budget);
-	const prcOf = (piece: DocPiece): DocRawSprm[] => ((piece.prm & 1) === 1 ? prcs[piece.prm >>> 1] ?? [] : []);
-	const grpprlCache = new Map<DocFkpRun | null, DocRawSprm[]>();
-	const grpprlOf = (run: DocFkpRun | undefined): DocRawSprm[] => {
+	const { ctx, resolver, counters } = input;
+	const text = ctx.text;
+	const chpx = ctx.fkpRuns('chpx');
+	const grpprlCache = new Map<DocFkpRun | null, readonly DocRawSprm[]>();
+	const grpprlOf = (run: DocFkpRun | undefined): readonly DocRawSprm[] => {
 		const key = run ?? null;
 		let hit = grpprlCache.get(key);
-		if (!hit) grpprlCache.set(key, (hit = parseGrpprl(run ? run.grpprl : EMPTY, budget)));
+		if (!hit) grpprlCache.set(key, (hit = parseGrpprl(run ? run.grpprl : EMPTY, ctx.budget)));
 		return hit;
 	};
 	const propsCache = new Map<DocFkpRun | null, Map<string, Readonly<DocCharProps>>>();
-	let runCount = 0;
 
 	/** Resolved character properties for a CHPX range under a paragraph style and piece. */
 	const charProps = (run: DocFkpRun | undefined, paraStyle: number, piece: DocPiece): Readonly<DocCharProps> => {
 		const key = run ?? null;
 		let inner = propsCache.get(key);
 		if (!inner) propsCache.set(key, (inner = new Map()));
-		const id = `${paraStyle}:${prcs.length && (piece.prm & 1) ? piece.prm : 0}`;
+		const id = `${paraStyle}:${piece.prm & 1 ? piece.prm : 0}`;
 		const hit = inner.get(id);
 		if (hit) return hit;
-		const sprms = [...grpprlOf(run), ...prcOf(piece)];
+		const sprms = [...grpprlOf(run), ...ctx.pieceSprms(piece)];
 		let cstyle: number | undefined;
 		for (const s of sprms) if (s.opcode === 0x4a30 && s.operand.length >= 2) cstyle = s.operand[0]! | (s.operand[1]! << 8);
 		const props = resolver.baseCharProps(paraStyle, cstyle);
@@ -81,57 +76,59 @@ export function splitParagraphs(input: SplitInput): DocFormatParagraph[] {
 		return frozen;
 	};
 
-	const paragraphs: DocFormatParagraph[] = [];
-	let pieceIdx = 0;
-	const pieceFor = (cp: number): DocPiece | undefined => {
-		while (pieceIdx < pieces.length && pieces[pieceIdx]!.cpEnd <= cp) pieceIdx++;
-		const p = pieces[pieceIdx];
-		return p && p.cpStart <= cp ? p : undefined;
-	};
 	const fcOf = (piece: DocPiece, cp: number): number => piece.fc + (cp - piece.cpStart) * (piece.compressed ? 1 : 2);
-	const runAt = (list: readonly DocFkpRun[], fc: number): DocFkpRun | undefined => {
-		const r = list[firstRunEndingAfter(list, fc)];
-		return r && r.fcStart <= fc ? r : undefined;
+	const chpxAt = (fc: number): DocFkpRun | undefined => ctx.runAt('chpx', fc);
+	const isMain = ctx.storyOf(input.cpStart) === 'main';
+	const end = Math.min(input.cpEnd, text.length);
+	const paragraphs: DocFormatParagraph[] = [];
+
+	const paraProps = (cp: number) => {
+		const info = paragraphInfoAt(ctx, cp);
+		return resolver.paragraphProps(info.istd, info.sprms);
+	};
+	const count = () => {
+		if (++counters.paragraphs > ctx.limits.maxParagraphs) throw new DocResourceLimitError('DOC paragraph count exceeds the processing limit');
 	};
 
-	let start = 0;
-	for (let cp = 0; cp < text.length; cp++) {
+	let start = input.cpStart;
+	for (let cp = start; cp < end; cp++) {
 		const code = text.charCodeAt(cp);
-		if (code !== 13 && code !== 7) continue;
-		const piece = pieceFor(cp);
+		const formFeed = code === 12 && isMain && input.sectionEnds.has(cp + 1);
+		if (code !== 13 && code !== 7 && !formFeed) continue;
+		const piece = ctx.pieceAt(cp);
 		if (!piece) break;
-		const prun = runAt(papx, fcOf(piece, cp));
-		const sprms = [...grpprlOf(prun), ...prcOf(piece)];
-		const props = resolver.paragraphProps(prun?.istd ?? 0, sprms);
+		const props = paraProps(cp);
 		// A bell is only a paragraph mark inside tables; elsewhere it is ordinary text.
 		if (code === 7 && !props.inTable && !props.tableRowEnd) continue;
-		if (paragraphs.length >= input.maxParagraphs) throw new DocResourceLimitError('DOC paragraph count exceeds the processing limit');
-		paragraphs.push(build(start, cp, text[cp]!, props, charProps(runAt(chpx, fcOf(piece, cp)), props.styleId ?? 0, piece)));
+		count();
+		paragraphs.push(build(start, cp, text[cp]!, props, charProps(chpxAt(fcOf(piece, cp)), props.styleId ?? 0, piece)));
 		start = cp + 1;
 	}
-	if (start < text.length) {
-		const last = pieceFor(text.length - 1);
-		const prun = last ? runAt(papx, fcOf(last, text.length - 1)) : undefined;
-		const props = resolver.paragraphProps(prun?.istd ?? 0, last ? [...grpprlOf(prun), ...prcOf(last)] : []);
-		const piece = last ?? pieces[0]!;
-		paragraphs.push(build(start, text.length, '', props, charProps(undefined, props.styleId ?? 0, piece)));
+	if (start < end) {
+		const last = ctx.pieceAt(end - 1);
+		const props = last ? paraProps(end - 1) : resolver.paragraphProps(0, []);
+		const piece = last ?? ctx.pieces[0];
+		if (piece) {
+			count();
+			paragraphs.push(build(start, end, '', props, charProps(undefined, props.styleId ?? 0, piece)));
+		}
 	}
 	return paragraphs;
 
-	function build(s: number, end: number, terminator: string, props: DocFormatParagraph['props'], mark: Readonly<DocCharProps>): DocFormatParagraph {
+	function build(s: number, e: number, terminator: string, props: DocFormatParagraph['props'], mark: Readonly<DocCharProps>): DocFormatParagraph {
 		const style = props.styleId ?? 0;
-		const runs = runsFor(s, end, style);
-		return { cpStart: s, cpEnd: terminator ? end + 1 : end, text: text.slice(s, end), style, props, markProps: mark, terminator, runs };
+		const runs = runsFor(s, e, style);
+		return { cpStart: s, cpEnd: terminator ? e + 1 : e, text: text.slice(s, e), style, props, markProps: mark, terminator, runs };
 	}
 
-	function runsFor(s: number, end: number, paraStyle: number): DocFormatRun[] {
+	function runsFor(s: number, e: number, paraStyle: number): DocFormatRun[] {
 		const runs: DocFormatRun[] = [];
 		let cp = s;
-		while (cp < end) {
-			const piece = pieceFor(cp);
+		while (cp < e) {
+			const piece = ctx.pieceAt(cp);
 			if (!piece) break;
 			const unit = piece.compressed ? 1 : 2;
-			const stop = Math.min(end, piece.cpEnd);
+			const stop = Math.min(e, piece.cpEnd);
 			let idx = firstRunEndingAfter(chpx, fcOf(piece, cp));
 			while (cp < stop) {
 				const fc = fcOf(piece, cp);
@@ -149,7 +146,7 @@ export function splitParagraphs(input: SplitInput): DocFormatParagraph[] {
 				const prev = runs.at(-1);
 				if (prev && prev.props === props && prev.cpEnd === cp) prev.cpEnd = next;
 				else {
-					if (++runCount > input.maxRuns) throw new DocResourceLimitError('DOC run count exceeds the processing limit');
+					if (++counters.runs > ctx.limits.maxRuns) throw new DocResourceLimitError('DOC run count exceeds the processing limit');
 					runs.push({ cpStart: cp, cpEnd: next, text: '', style: props.styleId, props });
 				}
 				cp = next;

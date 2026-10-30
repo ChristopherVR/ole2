@@ -1,33 +1,34 @@
 /**
- * Rich legacy `.doc` formatting reader: stylesheet, lists, fonts, and the
- * main story split into paragraphs and runs with resolved character and
- * paragraph properties ([MS-DOC] 2.4 and 2.6). Everything is keyed by
- * character position (CP) so table, field and picture readers compose on
- * top of the same ranges.
+ * Rich legacy `.doc` formatting reader: stylesheet, lists, fonts, and every
+ * story (main text, headers and footers, footnotes, endnotes, comments, text
+ * boxes) split into paragraphs and runs with resolved character and paragraph
+ * properties ([MS-DOC] 2.4 and 2.6). Everything is keyed by absolute character
+ * position (CP) so table, field and picture readers compose on top of the same
+ * ranges.
  *
  * @module doc-formatting
  */
 import type { DocCharProps } from './doc-char-props.js';
 import { readDocFonts, readDocProperties } from './doc-fonts.js';
 import type { DocFont, DocProperties } from './doc-fonts.js';
-import { readFkpRuns } from './doc-fkp-runs.js';
+import { splitParagraphs } from './doc-formatting-paragraphs.js';
+import type { SplitCounters } from './doc-formatting-paragraphs.js';
+import { resolveDocLimits } from './doc-limits.js';
+import type { DocModelLimits } from './doc-limits.js';
 import { readDocLists } from './doc-lists.js';
 import type { DocLists } from './doc-lists.js';
 import type { DocParaProps } from './doc-para-props.js';
+import { readDocSections } from './doc-sections.js';
+import { openStoryContext, STORY_ORDER } from './doc-story.js';
+import type { DocStoryId, StoryContext } from './doc-story.js';
 import { DocStyleResolver } from './doc-style-resolve.js';
 import { readDocStylesheet } from './doc-styles.js';
 import type { DocStyle } from './doc-styles.js';
-import type { SprmBudget } from './doc-sprm.js';
-import { splitParagraphs } from './doc-formatting-paragraphs.js';
-import { unwrapDocBytes } from './ole-document-doc-cfb.js';
-import { DEFAULT_OLE_DOC_PROCESSING_LIMITS } from './ole-document-doc-editor.js';
-import type { OleDocProcessingLimits } from './ole-document-doc-editor.js';
-import { readDocFib, readFcLcbAt } from './ole-document-doc-fib.js';
-import type { ParsedDocFib } from './ole-document-doc-fib.js';
-import { DocResourceLimitError, decodePiecesText, parseDocClx } from './ole-document-doc-pieces.js';
+import { DocResourceLimitError } from './ole-document-doc-pieces.js';
 
 /** A run: a CP range with uniform resolved character formatting. */
 export interface DocFormatRun {
+	/** Absolute CP of the first character. */
 	cpStart: number;
 	cpEnd: number;
 	text: string;
@@ -37,7 +38,7 @@ export interface DocFormatRun {
 	props: Readonly<DocCharProps>;
 }
 
-/** A paragraph: `[cpStart, cpEnd)` includes its terminating mark; `text` excludes it. */
+/** A paragraph: `[cpStart, cpEnd)` (absolute CPs) includes its terminating mark; `text` excludes it. */
 export interface DocFormatParagraph {
 	cpStart: number;
 	cpEnd: number;
@@ -48,7 +49,7 @@ export interface DocFormatParagraph {
 	props: DocParaProps;
 	/** Resolved character properties of the paragraph mark (what an empty paragraph looks like). */
 	markProps: Readonly<DocCharProps>;
-	/** The terminating character: carriage return, or the table cell/row mark (U+0007). */
+	/** The terminating character: carriage return, the table cell/row mark (U+0007), or a section form feed (U+000C). */
 	terminator: string;
 	runs: DocFormatRun[];
 }
@@ -62,46 +63,60 @@ export interface DocFormatting {
 	properties: DocProperties;
 	/** Main story length in characters (ccpText). */
 	characterCount: number;
+	/** Paragraphs of the main story (the same array as `stories.main`). */
 	paragraphs: DocFormatParagraph[];
+	/** Paragraphs of every non-empty story, with absolute CPs. */
+	stories: Partial<Record<DocStoryId, DocFormatParagraph[]>>;
 	/** Non-fatal problems (unreadable stylesheet, list table, ...). */
 	warnings: string[];
 }
 
-/** Processing budgets; the inherited limits keep their {@link DEFAULT_OLE_DOC_PROCESSING_LIMITS} defaults. */
-export interface DocFormattingLimits extends OleDocProcessingLimits {
-	/** Paragraphs materialised (default 262144). */
-	maxParagraphs?: number;
-	/** Runs materialised (default 1048576). */
-	maxRuns?: number;
-	/** Styles read (default 4096). */
-	maxStyles?: number;
-	/** Sprms decoded in total (default 8388608). */
-	maxSprms?: number;
-	/** Formatted disk pages read per table (default 65536). */
-	maxFormattingPages?: number;
-	/** List definitions and instances read (default 4096). */
-	maxLists?: number;
-}
+/** Processing budgets (a subset of {@link DocModelLimits}). */
+export type DocFormattingLimits = DocModelLimits;
 
 const FIB_STSH = 1, FIB_FFN = 15, FIB_DOP = 31, FIB_LST = 73, FIB_LFO = 74;
-const NONE = { fc: 0, lcb: 0 };
 
-function limitOf(value: number | undefined, fallback: number): number {
-	if (value === undefined) return fallback;
-	if (!Number.isSafeInteger(value) || value < 0) throw new Error('DOC processing limits must be nonnegative safe integers');
-	return value;
-}
-
-function pair(word: Uint8Array, fib: ParsedDocFib, index: number): { fc: number; lcb: number } {
-	try {
-		return readFcLcbAt(word, fib, index);
-	} catch {
-		return NONE;
+/**
+ * Read styles, lists, fonts and every formatted story from an opened context.
+ * Damaged optional tables become warnings; budget overruns throw
+ * {@link DocResourceLimitError}.
+ */
+export function formatFromContext(ctx: StoryContext, sectionEnds: ReadonlySet<number>): DocFormatting {
+	const warnings: string[] = [];
+	const attempt = <T>(label: string, fallback: T, fn: () => T): T => {
+		try {
+			return fn();
+		} catch (e) {
+			if (e instanceof DocResourceLimitError) throw e;
+			warnings.push(`${label} unreadable: ${e instanceof Error ? e.message : String(e)}`);
+			return fallback;
+		}
+	};
+	const { table, budget, limits } = ctx;
+	const fonts = attempt('font table', [] as DocFont[], () => readDocFonts(table, ctx.pair(FIB_FFN)));
+	const sheet = attempt('stylesheet', { styles: [], defaultFonts: {}, stiMaxWhenSaved: 0 }, () =>
+		readDocStylesheet(table, ctx.pair(FIB_STSH), { maxStyles: limits.maxStyles, budget }));
+	const resolver = new DocStyleResolver(sheet, fonts);
+	const lists = attempt('lists', { definitions: [], overrides: [] } as DocLists, () =>
+		readDocLists(table, ctx.pair(FIB_LST), ctx.pair(FIB_LFO), {
+			maxLists: limits.maxLists, budget, fontNames: (p) => resolver.withFontNames(p),
+		}));
+	const properties = attempt('document properties', {} as DocProperties, () => readDocProperties(table, ctx.pair(FIB_DOP)));
+	const counters: SplitCounters = { paragraphs: 0, runs: 0 };
+	const stories: Partial<Record<DocStoryId, DocFormatParagraph[]>> = {};
+	for (const id of STORY_ORDER) {
+		const e = ctx.extents[id];
+		if (e.length <= 0) continue;
+		stories[id] = splitParagraphs({ ctx, resolver, cpStart: e.start, cpEnd: e.start + e.length, sectionEnds, counters });
 	}
+	return {
+		styles: sheet.styles, lists, fonts, properties, characterCount: ctx.extents.main.length,
+		paragraphs: stories.main ?? [], stories, warnings: [...ctx.warnings, ...warnings],
+	};
 }
 
 /**
- * Read styles, lists, fonts and the formatted main story of a legacy Word
+ * Read styles, lists, fonts and the formatted stories of a legacy Word
  * 97-2003 document. Returns undefined when the bytes are not a readable,
  * unencrypted Word document. Throws {@link DocResourceLimitError} when a
  * processing budget is exceeded. Control characters stay in the text (field
@@ -109,50 +124,17 @@ function pair(word: Uint8Array, fib: ParsedDocFib, index: number): { fc: number;
  * interpret them by CP.
  */
 export function readDocFormatting(bytes: Uint8Array, limits?: DocFormattingLimits): DocFormatting | undefined {
-	const maxCharacters = limitOf(limits?.maxCharacters, DEFAULT_OLE_DOC_PROCESSING_LIMITS.maxCharacters);
-	const maxPieces = limitOf(limits?.maxPieces, DEFAULT_OLE_DOC_PROCESSING_LIMITS.maxPieces);
-	const budget: SprmBudget = { remaining: limitOf(limits?.maxSprms, 8_388_608) };
-	const maxParagraphs = limitOf(limits?.maxParagraphs, 262_144);
-	const maxRuns = limitOf(limits?.maxRuns, 1_048_576);
-	const maxStyles = limitOf(limits?.maxStyles, 4096);
-	const maxLists = limitOf(limits?.maxLists, 4096);
-	const maxPages = limitOf(limits?.maxFormattingPages, 65_536);
+	resolveDocLimits(limits); // invalid limits are a caller error, not a damaged file
 	try {
-		const doc = unwrapDocBytes(bytes);
-		if (!doc) return undefined;
-		const word = doc.wordDocBytes, table = doc.tableBytes;
-		const fib = readDocFib(word);
-		if (fib.ccpText > maxCharacters) throw new DocResourceLimitError('DOC main story exceeds the processing limit');
-		const clx = parseDocClx(table, fib.clx, maxPieces);
-		const text = decodePiecesText(word, clx.pieces, fib.ccpText);
-		if (text.length < fib.ccpText) return undefined;
-		const warnings: string[] = [];
-		const attempt = <T>(label: string, fallback: T, fn: () => T): T => {
-			try {
-				return fn();
-			} catch (e) {
-				if (e instanceof DocResourceLimitError) throw e;
-				warnings.push(`${label} unreadable: ${e instanceof Error ? e.message : String(e)}`);
-				return fallback;
-			}
-		};
-		const fonts = attempt('font table', [] as DocFont[], () => readDocFonts(table, pair(word, fib, FIB_FFN)));
-		const sheet = attempt('stylesheet', { styles: [], defaultFonts: {}, stiMaxWhenSaved: 0 }, () =>
-			readDocStylesheet(table, pair(word, fib, FIB_STSH), { maxStyles, budget }));
-		const resolver = new DocStyleResolver(sheet, fonts);
-		const lists = attempt('lists', { definitions: [], overrides: [] } as DocLists, () =>
-			readDocLists(table, pair(word, fib, FIB_LST), pair(word, fib, FIB_LFO), {
-				maxLists, budget, fontNames: (p) => resolver.withFontNames(p),
-			}));
-		const properties = attempt('document properties', {} as DocProperties, () => readDocProperties(table, pair(word, fib, FIB_DOP)));
-		const limitsFkp = { maxPages, maxRuns };
-		const chpx = readFkpRuns(word, table, fib.plcfbteChpx, 'chpx', limitsFkp);
-		const papx = readFkpRuns(word, table, fib.plcfbtePapx, 'papx', limitsFkp);
-		const paragraphs = splitParagraphs({
-			text: text.slice(0, fib.ccpText), pieces: clx.pieces, prcBytes: clx.prcBytes, chpx, papx, resolver, budget,
-			maxParagraphs, maxRuns,
-		});
-		return { styles: sheet.styles, lists, fonts, properties, characterCount: fib.ccpText, paragraphs, warnings };
+		const ctx = openStoryContext(bytes, limits);
+		if (ctx.text.length < ctx.extents.main.length) return undefined;
+		let sectionEnds = new Set<number>();
+		try {
+			sectionEnds = new Set(readDocSections(ctx).map((s) => s.end));
+		} catch (e) {
+			if (e instanceof DocResourceLimitError) throw e;
+		}
+		return formatFromContext(ctx, sectionEnds);
 	} catch (e) {
 		if (e instanceof DocResourceLimitError) throw e;
 		return undefined;
