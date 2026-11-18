@@ -151,8 +151,14 @@ export class SegmentReader {
 	u32(): number {
 		return (this.u16() | (this.u16() << 16)) >>> 0;
 	}
+	/** Moves forward `count` bytes, stopping at the end of the data (`count` comes from the file). */
 	skip(count: number): void {
-		for (let i = 0; i < count; i++) this.u8();
+		let left = count;
+		while (left > 0 && !this.done) {
+			const step = Math.min(left, (this.segments[this.segment]?.length ?? 0) - this.pos);
+			this.pos += step;
+			left -= step;
+		}
 	}
 
 	/**

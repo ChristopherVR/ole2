@@ -6,7 +6,7 @@ import {
 	quoteSheetName,
 	type PtgContext,
 } from '../src/legacy-excel-workbook-ptg.js';
-import { readXlsRecords } from '../src/legacy-excel-workbook-records.js';
+import { readXlsRecords, SegmentReader } from '../src/legacy-excel-workbook-records.js';
 import { parseSharedStrings } from '../src/legacy-excel-workbook-sst.js';
 import { buildOle2 } from '../src/ole2-parser-write.js';
 
@@ -27,6 +27,37 @@ const record = (opcode: number, data: number[]): number[] => [
 const bof = (type: number, version = 0x0600): number[] =>
 	record(0x0809, [...u16(version), ...u16(type), ...new Array<number>(12).fill(0)]);
 const EOF = record(0x000a, []);
+
+describe('SegmentReader.skip', () => {
+	const bytes = (...values: number[]) => new Uint8Array(values);
+
+	it('moves across segment boundaries', () => {
+		const reader = new SegmentReader([bytes(1, 2), bytes(3), bytes(4, 5)]);
+		reader.skip(3);
+		expect(reader.u8()).toBe(4);
+		reader.skip(0);
+		expect(reader.u8()).toBe(5);
+		expect(reader.done).toBe(true);
+	});
+
+	it('stops at the end of the data whatever size the file declares', () => {
+		const reader = new SegmentReader([bytes(1, 2), bytes(3)]);
+		const started = performance.now();
+		reader.skip(0xffffffff);
+		expect(performance.now() - started).toBeLessThan(100);
+		expect(reader.done).toBe(true);
+		expect(reader.u8()).toBe(0);
+	});
+
+	it('keeps a shared string whose phonetic block claims 4 GiB', () => {
+		const entry = [...u16(1), 0x04, ...u32(0xffffffff), ...ascii('a')];
+		const sst = record(0x00fc, [...u32(2), ...u32(2), ...entry, ...entry]);
+		const started = performance.now();
+		const strings = parseSharedStrings(readXlsRecords(new Uint8Array(sst))[0]!);
+		expect(performance.now() - started).toBeLessThan(100);
+		expect(strings).toEqual(['a']);
+	});
+});
 
 /** A minimal globals + one worksheet stream with the given sheet records. */
 function workbookStream(
